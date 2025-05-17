@@ -1,0 +1,248 @@
+{
+  "client": "Thunder Client",
+  "collectionName": "WebRTC Audio Call Tests",
+  "dateExported": "2023-10-20T10:00:00.000Z",
+  "version": "1.1",
+  "folders": [
+    {
+      "_id": "f1",
+      "name": "Authentication",
+      "containerId": "",
+      "created": "2023-10-20T10:00:00.000Z",
+      "sortNum": 10000
+    },
+    {
+      "_id": "f2",
+      "name": "Call Features",
+      "containerId": "",
+      "created": "2023-10-20T10:00:00.000Z",
+      "sortNum": 20000
+    }
+  ],
+  "requests": [
+    {
+      "_id": "r1",
+      "colId": "c1",
+      "containerId": "f1",
+      "name": "Register User 1",
+      "url": "{{baseUrl}}/auth/register",
+      "method": "POST",
+      "sortNum": 10000,
+      "created": "2023-10-20T10:00:00.000Z",
+      "modified": "2023-10-20T10:00:00.000Z",
+      "headers": [
+        {
+          "name": "Content-Type",
+          "value": "application/json"
+        }
+      ],
+      "params": [],
+      "body": {
+        "type": "json",
+        "raw": "{\n  \"name\": \"Test User 1\",\n  \"email\": \"testuser1@example.com\",\n  \"password\": \"password123\"\n}",
+        "form": []
+      },
+      "tests": [
+        {
+          "type": "set-env-var",
+          "custom": "json.token",
+          "action": "setto",
+          "value": "{{user1Token}}"
+        },
+        {
+          "type": "set-env-var",
+          "custom": "json.user._id",
+          "action": "setto",
+          "value": "{{user1Id}}"
+        }
+      ]
+    },
+    {
+      "_id": "r2",
+      "colId": "c1",
+      "containerId": "f1",
+      "name": "Register User 2",
+      "url": "{{baseUrl}}/auth/register",
+      "method": "POST",
+      "sortNum": 20000,
+      "created": "2023-10-20T10:00:00.000Z",
+      "modified": "2023-10-20T10:00:00.000Z",
+      "headers": [
+        {
+          "name": "Content-Type",
+          "value": "application/json"
+        }
+      ],
+      "params": [],
+      "body": {
+        "type": "json",
+        "raw": "{\n  \"name\": \"Test User 2\",\n  \"email\": \"testuser2@example.com\",\n  \"password\": \"password123\"\n}",
+        "form": []
+      },
+      "tests": [
+        {
+          "type": "set-env-var",
+          "custom": "json.token",
+          "action": "setto",
+          "value": "{{user2Token}}"
+        },
+        {
+          "type": "set-env-var",
+          "custom": "json.user._id",
+          "action": "setto",
+          "value": "{{user2Id}}"
+        }
+      ]
+    },
+    {
+      "_id": "r3",
+      "colId": "c1",
+      "containerId": "f1",
+      "name": "Login User 1",
+      "url": "{{baseUrl}}/auth/login",
+      "method": "POST",
+      "sortNum": 30000,
+      "created": "2023-10-20T10:00:00.000Z",
+      "modified": "2023-10-20T10:00:00.000Z",
+      "headers": [
+        {
+          "name": "Content-Type",
+          "value": "application/json"
+        }
+      ],
+      "params": [],
+      "body": {
+        "type": "json",
+        "raw": "{\n  \"email\": \"testuser1@example.com\",\n  \"password\": \"password123\"\n}",
+        "form": []
+      },
+      "tests": [
+        {
+          "type": "set-env-var",
+          "custom": "json.token",
+          "action": "setto",
+          "value": "{{user1Token}}"
+        },
+        {
+          "type": "set-env-var",
+          "custom": "json.user._id",
+          "action": "setto",
+          "value": "{{user1Id}}"
+        }
+      ]
+    },
+    {
+      "_id": "r4",
+      "colId": "c1",
+      "containerId": "f1",
+      "name": "Login User 2",
+      "url": "{{baseUrl}}/auth/login",
+      "method": "POST",
+      "sortNum": 40000,
+      "created": "2023-10-20T10:00:00.000Z",
+      "modified": "2023-10-20T10:00:00.000Z",
+      "headers": [
+        {
+          "name": "Content-Type",
+          "value": "application/json"
+        }
+      ],
+      "params": [],
+      "body": {
+        "type": "json",
+        "raw": "{\n  \"email\": \"testuser2@example.com\",\n  \"password\": \"password123\"\n}",
+        "form": []
+      },
+      "tests": [
+        {
+          "type": "set-env-var",
+          "custom": "json.token",
+          "action": "setto",
+          "value": "{{user2Token}}"
+        },
+        {
+          "type": "set-env-var",
+          "custom": "json.user._id",
+          "action": "setto",
+          "value": "{{user2Id}}"
+        }
+      ]
+    },
+    {
+      "_id": "r5",
+      "colId": "c1",
+      "containerId": "f2",
+      "name": "Get Call History",
+      "url": "{{baseUrl}}/calls/history",
+      "method": "GET",
+      "sortNum": 10000,
+      "created": "2023-10-20T10:00:00.000Z",
+      "modified": "2023-10-20T10:00:00.000Z",
+      "headers": [
+        {
+          "name": "Authorization",
+          "value": "Bearer {{user1Token}}"
+        }
+      ],
+      "params": [],
+      "tests": []
+    },
+    {
+      "_id": "r6",
+      "colId": "c1",
+      "containerId": "f2",
+      "name": "Run WebRTC Connection Test",
+      "url": "{{baseUrl}}/test-webrtc",
+      "method": "POST",
+      "sortNum": 20000,
+      "created": "2023-10-20T10:00:00.000Z",
+      "modified": "2023-10-20T10:00:00.000Z",
+      "headers": [
+        {
+          "name": "Content-Type",
+          "value": "application/json"
+        }
+      ],
+      "params": [],
+      "body": {
+        "type": "json",
+        "raw": "{\n  \"user1Id\": \"{{user1Id}}\",\n  \"user1Token\": \"{{user1Token}}\",\n  \"user2Id\": \"{{user2Id}}\",\n  \"user2Token\": \"{{user2Token}}\"\n}",
+        "form": []
+      },
+      "tests": []
+    }
+  ],
+  "settings": {
+    "headers": [],
+    "auth": {
+      "type": "none",
+      "bearer": ""
+    },
+    "tests": [],
+    "options": {
+      "baseUrl": "http://localhost:3000/api"
+    },
+    "envVariables": [
+      {
+        "name": "baseUrl",
+        "value": "http://localhost:3000/api"
+      },
+      {
+        "name": "user1Token",
+        "value": ""
+      },
+      {
+        "name": "user1Id",
+        "value": ""
+      },
+      {
+        "name": "user2Token",
+        "value": ""
+      },
+      {
+        "name": "user2Id",
+        "value": ""
+      }
+    ]
+  }
+} 

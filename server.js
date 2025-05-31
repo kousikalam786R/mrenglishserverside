@@ -107,15 +107,15 @@ io.on('connection', (socket) => {
   
   // Add user to online users map
   if (socket.userId) {
-    onlineUsers.set(socket.userId.toString(), socket.id);
+  onlineUsers.set(socket.userId.toString(), socket.id);
     console.log(`Added user ${socket.userId} to online users map. Total online: ${onlineUsers.size}`);
     console.log('Current online users:', Array.from(onlineUsers.keys()));
-    
-    // Broadcast online status to all connected clients
-    io.emit('user-status', {
-      userId: socket.userId,
-      status: 'online'
-    });
+  
+  // Broadcast online status to all connected clients
+  io.emit('user-status', {
+    userId: socket.userId,
+    status: 'online'
+  });
   } else {
     console.warn('Socket connected without userId');
   }
@@ -123,7 +123,45 @@ io.on('connection', (socket) => {
   // WebRTC Call Signaling - Call Offer
   socket.on('call-offer', async (data) => {
     try {
-      const { targetUserId, sdp, type, isVideo } = data;
+      const { targetUserId, sdp, type, isVideo, renegotiation } = data;
+      
+      // Check if this is a renegotiation or a new call
+      if (renegotiation) {
+        console.log(`Renegotiation offer from ${socket.userId} to ${targetUserId}`, isVideo ? '(adding video)' : '');
+        
+        // Get target user socket
+        const targetSocket = getUserSocket(targetUserId);
+        
+        if (targetSocket) {
+          // Forward renegotiation offer to target user
+          targetSocket.emit('call-offer', {
+            callerId: socket.userId,
+            callerName: socket.user.name,
+            sdp,
+            type,
+            isVideo,
+            renegotiation: true
+          });
+          
+          // Notify caller that the renegotiation offer was sent
+          socket.emit('call-offer-sent', { 
+            success: true, 
+            targetUserId,
+            renegotiation: true
+          });
+        } else {
+          // Target user is offline
+          socket.emit('call-offer-sent', { 
+            success: false, 
+            error: 'User is offline',
+            targetUserId,
+            renegotiation: true
+          });
+        }
+        return;
+      }
+      
+      // Original code for new calls
       console.log(`Call offer from ${socket.userId} to ${targetUserId}`, isVideo ? '(video)' : '(audio)');
       
       // Record call attempt in database
@@ -170,7 +208,30 @@ io.on('connection', (socket) => {
   // WebRTC Call Signaling - Call Answer
   socket.on('call-answer', async (data) => {
     try {
-      const { targetUserId, sdp, type, accepted, callHistoryId } = data;
+      const { targetUserId, sdp, type, accepted, callHistoryId, renegotiation } = data;
+      
+      // Check if this is a renegotiation answer
+      if (renegotiation) {
+        console.log(`Renegotiation answer from ${socket.userId} to ${targetUserId}`);
+        
+        // Get caller socket
+        const callerSocket = getUserSocket(targetUserId);
+        
+        if (callerSocket) {
+          // Forward renegotiation answer to caller
+          callerSocket.emit('call-answer', {
+            responderId: socket.userId,
+            responderName: socket.user.name,
+            sdp,
+            type,
+            accepted: true,
+            renegotiation: true
+          });
+        }
+        return;
+      }
+      
+      // Original code for regular call answers
       console.log(`Call ${accepted ? 'accepted' : 'rejected'} by ${socket.userId} for ${targetUserId}`);
       
       // Update call history in database
@@ -481,26 +542,95 @@ io.on('connection', (socket) => {
     }
   });
   
+  // Video upgrade handling
+  socket.on('video-upgrade-request', (data) => {
+    console.log(`Video upgrade request from ${socket.userId} to ${data.targetUserId}`);
+    
+    // Forward the request to the target user
+    const targetSocketId = onlineUsers.get(data.targetUserId);
+    if (targetSocketId) {
+      io.to(targetSocketId).emit('video-upgrade-request', {
+        from: socket.userId
+      });
+    } else {
+      console.log(`Target user ${data.targetUserId} not found or offline`);
+    }
+  });
+  
+  socket.on('video-upgrade-accepted', (data) => {
+    console.log(`Video upgrade accepted by ${socket.userId} for ${data.targetUserId}`);
+    
+    // Update call record to indicate video is now used
+    try {
+      // Use the Call controller to update the call
+      const callController = require('./controllers/callController');
+      callController.updateCallToVideo(socket.userId, data.targetUserId)
+        .then(() => {
+          console.log('Call record updated to include video');
+        })
+        .catch(error => {
+          console.error('Error updating call record for video:', error.message);
+        });
+    } catch (error) {
+      console.error('Error importing call controller:', error.message);
+    }
+    
+    // Forward the acceptance to the requesting user
+    const targetSocketId = onlineUsers.get(data.targetUserId);
+    if (targetSocketId) {
+      io.to(targetSocketId).emit('video-upgrade-accepted', {
+        from: socket.userId
+      });
+    } else {
+      console.log(`Target user ${data.targetUserId} not found or offline`);
+    }
+  });
+  
+  socket.on('video-upgrade-rejected', (data) => {
+    console.log(`Video upgrade rejected by ${socket.userId} for ${data.targetUserId}`);
+    
+    // Forward the rejection to the requesting user
+    const targetSocketId = onlineUsers.get(data.targetUserId);
+    if (targetSocketId) {
+      io.to(targetSocketId).emit('video-upgrade-rejected', {
+        from: socket.userId
+      });
+    } else {
+      console.log(`Target user ${data.targetUserId} not found or offline`);
+    }
+  });
+  
+  // Call room handling for multiple devices
+  socket.on('join-call-room', (data) => {
+    console.log(`User ${socket.userId} joining call room ${data.roomId}`);
+    socket.join(`call:${data.roomId}`);
+  });
+  
+  socket.on('leave-call-room', (data) => {
+    console.log(`User ${socket.userId} leaving call room ${data.roomId}`);
+    socket.leave(`call:${data.roomId}`);
+  });
+  
   // Handle disconnect - update to also clear ready-to-talk status
   socket.on('disconnect', () => {
     if (socket.userId) {
       console.log(`User disconnected: ${socket.userId} with socket ID: ${socket.id}`);
-      
+    
       // Check if this user has another socket connection before removing
       const currentSocketId = onlineUsers.get(socket.userId.toString());
       if (currentSocketId === socket.id) {
         // Remove user from online users map only if this is the socket that put them online
-        onlineUsers.delete(socket.userId.toString());
+    onlineUsers.delete(socket.userId.toString());
         console.log(`Removed user ${socket.userId} from online users map. Total online: ${onlineUsers.size}`);
         
         // Clear ready to talk status
         clearUserReadyToTalk(socket.userId);
-        
-        // Broadcast offline status to all connected clients
-        io.emit('user-status', {
-          userId: socket.userId,
-          status: 'offline'
-        });
+    
+    // Broadcast offline status to all connected clients
+    io.emit('user-status', {
+      userId: socket.userId,
+      status: 'offline'
+    });
         
         // Broadcast ready status change
         broadcastReadyToTalkStatus(socket.userId, false);

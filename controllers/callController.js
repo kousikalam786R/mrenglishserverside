@@ -1,5 +1,7 @@
 const CallHistory = require('../models/CallHistory');
 const User = require('../models/User');
+// Remove the static Call import since we'll use dynamic requires
+// const Call = require('../models/Call');
 
 // Record a new call attempt
 exports.recordCallAttempt = async (callerId, receiverId, isVideoCall) => {
@@ -127,5 +129,67 @@ exports.getCallDetails = async (req, res) => {
   } catch (error) {
     console.error('Error getting call details:', error);
     return res.status(500).json({ message: 'Server error' });
+  }
+};
+
+/**
+ * Update a call to indicate video is now used
+ * @param {string} userId - The user ID of one participant
+ * @param {string} otherUserId - The user ID of the other participant
+ * @returns {Promise} - Promise resolving when the call is updated
+ */
+exports.updateCallToVideo = async (userId, otherUserId) => {
+  try {
+    let result = null;
+    
+    // Try to update using the Call model
+    try {
+      const Call = require('../models/Call');
+      
+      result = await Call.findOneAndUpdate(
+        { 
+          $or: [
+            { caller: userId, recipient: otherUserId, status: 'connected' },
+            { caller: otherUserId, recipient: userId, status: 'connected' }
+          ]
+        },
+        { isVideo: true },
+        { new: true }
+      );
+      
+      if (result) {
+        console.log(`Call between ${userId} and ${otherUserId} updated to video using Call model`);
+        return result;
+      }
+    } catch (callModelError) {
+      console.log('Call model not available, falling back to CallHistory:', callModelError.message);
+    }
+    
+    // Fall back to CallHistory if Call model didn't work or no result found
+    try {
+      result = await CallHistory.findOneAndUpdate(
+        { 
+          $or: [
+            { caller: userId, receiver: otherUserId, status: 'answered' },
+            { caller: otherUserId, receiver: userId, status: 'answered' }
+          ]
+        },
+        { isVideoCall: true },
+        { new: true }
+      );
+      
+      if (result) {
+        console.log(`Call between ${userId} and ${otherUserId} updated to video using CallHistory model`);
+      } else {
+        console.log(`No active call found between ${userId} and ${otherUserId}`);
+      }
+    } catch (callHistoryError) {
+      console.error('Error updating CallHistory:', callHistoryError);
+    }
+    
+    return result;
+  } catch (error) {
+    console.error('Error updating call to video:', error);
+    throw error;
   }
 }; 

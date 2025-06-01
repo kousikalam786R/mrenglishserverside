@@ -10,6 +10,8 @@ const jwt = require('jsonwebtoken');
 const User = require('./models/User');
 const Message = require('./models/Message');
 const { setOnlineUsersMap, getReadyToTalkUsers, setUserReadyToTalk, clearUserReadyToTalk, getUserSocketId } = require('./utils/onlineUsers');
+const aiRoutes = require('./routes/aiRoutes');
+const aiService = require('./utils/aiService');
 
 // Connect to database
 connectDB();
@@ -641,12 +643,70 @@ io.on('connection', (socket) => {
       console.log('Socket disconnected without userId');
     }
   });
+  
+  // Handle AI chat message
+  socket.on('ai-message', async (data) => {
+    try {
+      const { message, conversationId, options } = data;
+      
+      if (!socket.userId) {
+        socket.emit('ai-response-error', {
+          error: 'Authentication required'
+        });
+        return;
+      }
+      
+      // Start typing indicator
+      socket.emit('ai-typing', { isTyping: true });
+      
+      // Generate AI response
+      const result = await aiService.generateResponse(
+        socket.userId,
+        message,
+        conversationId,
+        options
+      );
+      
+      // Stop typing indicator
+      socket.emit('ai-typing', { isTyping: false });
+      
+      // Send response back to user
+      socket.emit('ai-response', {
+        success: true,
+        response: result.response,
+        conversationId: result.conversationId
+      });
+    } catch (error) {
+      console.error('Error processing AI message:', error);
+      
+      // Stop typing indicator
+      socket.emit('ai-typing', { isTyping: false });
+      
+      // Send error back to user
+      socket.emit('ai-response-error', {
+        success: false,
+        error: error.message || 'Error processing AI request'
+      });
+    }
+  });
 });
 
 // Middleware
 // Configure CORS for all routes with more permissive settings for development
 const corsOptions = {
-  origin: ['*', 'http://localhost:5000', 'http://127.0.0.1:5000', 'http://10.0.2.2:5000'],
+  origin: [
+    '*', 
+    'http://localhost:5000', 
+    'http://127.0.0.1:5000', 
+    'http://10.0.2.2:5000',
+    // React Native emulator addresses
+    'http://localhost:8081',
+    'http://10.0.2.2:8081',
+    'http://localhost:19000',
+    'http://10.0.2.2:19000',
+    'exp://*',
+    'file://*'
+  ],
   methods: ['GET', 'POST', 'PUT', 'DELETE', 'OPTIONS'],
   allowedHeaders: ['Content-Type', 'Authorization', 'Accept'],
   credentials: true,
@@ -684,6 +744,7 @@ app.use('/api/messages', require('./routes/messageRoutes'));
 // Fix for call routes issue
 const expressCallRoutes = require('./routes/callRoutes');
 app.use('/api/calls', expressCallRoutes);
+app.use('/api/ai', aiRoutes);
 
 // Simple test endpoint for connectivity testing
 app.get('/test', (req, res) => {

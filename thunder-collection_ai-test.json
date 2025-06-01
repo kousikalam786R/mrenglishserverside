@@ -1,0 +1,137 @@
+{
+  "client": "Thunder Client",
+  "collectionName": "MR English AI Tests",
+  "dateExported": "2023-06-01T12:00:00.000Z",
+  "version": "1.1",
+  "folders": [
+    {
+      "name": "Authentication",
+      "_id": "auth-folder",
+      "containerId": "",
+      "created": "2023-06-01T12:00:00.000Z",
+      "sortNum": 10000
+    },
+    {
+      "name": "AI Endpoints",
+      "_id": "ai-folder",
+      "containerId": "",
+      "created": "2023-06-01T12:00:00.000Z",
+      "sortNum": 20000
+    }
+  ],
+  "requests": [
+    {
+      "_id": "debug-token",
+      "colId": "ai-collection",
+      "containerId": "auth-folder",
+      "name": "Debug Token",
+      "url": "http://localhost:5000/api/debug/token",
+      "method": "POST",
+      "sortNum": 10000,
+      "created": "2023-06-01T12:00:00.000Z",
+      "modified": "2023-06-01T12:00:00.000Z",
+      "headers": [
+        {
+          "name": "Content-Type",
+          "value": "application/json"
+        }
+      ],
+      "params": [],
+      "body": {
+        "type": "json",
+        "raw": "{\n  \"token\": \"YOUR_JWT_TOKEN_HERE\"\n}",
+        "form": []
+      },
+      "tests": []
+    },
+    {
+      "_id": "health-check",
+      "colId": "ai-collection",
+      "containerId": "",
+      "name": "Health Check",
+      "url": "http://localhost:5000/healthcheck",
+      "method": "GET",
+      "sortNum": 5000,
+      "created": "2023-06-01T12:00:00.000Z",
+      "modified": "2023-06-01T12:00:00.000Z",
+      "headers": [],
+      "params": [],
+      "tests": []
+    },
+    {
+      "_id": "ai-chat",
+      "colId": "ai-collection",
+      "containerId": "ai-folder",
+      "name": "AI Chat",
+      "url": "http://localhost:5000/api/ai/chat",
+      "method": "POST",
+      "sortNum": 20000,
+      "created": "2023-06-01T12:00:00.000Z",
+      "modified": "2023-06-01T12:00:00.000Z",
+      "headers": [
+        {
+          "name": "Content-Type",
+          "value": "application/json"
+        },
+        {
+          "name": "Authorization",
+          "value": "Bearer YOUR_JWT_TOKEN_HERE"
+        }
+      ],
+      "params": [],
+      "body": {
+        "type": "json",
+        "raw": "{\n  \"message\": \"Hello, this is a test message\",\n  \"conversationId\": null,\n  \"options\": {\n    \"languageLevel\": \"intermediate\",\n    \"topic\": \"general\"\n  }\n}",
+        "form": []
+      },
+      "tests": []
+    },
+    {
+      "_id": "ai-generate",
+      "colId": "ai-collection",
+      "containerId": "ai-folder",
+      "name": "AI Generate",
+      "url": "http://localhost:5000/api/ai/generate",
+      "method": "POST",
+      "sortNum": 30000,
+      "created": "2023-06-01T12:00:00.000Z",
+      "modified": "2023-06-01T12:00:00.000Z",
+      "headers": [
+        {
+          "name": "Content-Type",
+          "value": "application/json"
+        },
+        {
+          "name": "Authorization",
+          "value": "Bearer YOUR_JWT_TOKEN_HERE"
+        }
+      ],
+      "params": [],
+      "body": {
+        "type": "json",
+        "raw": "{\n  \"message\": \"Hello, this is a test message\",\n  \"conversationId\": null,\n  \"options\": {\n    \"languageLevel\": \"intermediate\",\n    \"topic\": \"general\"\n  }\n}",
+        "form": []
+      },
+      "tests": []
+    },
+    {
+      "_id": "get-conversations",
+      "colId": "ai-collection",
+      "containerId": "ai-folder",
+      "name": "Get Conversations",
+      "url": "http://localhost:5000/api/ai/conversations",
+      "method": "GET",
+      "sortNum": 40000,
+      "created": "2023-06-01T12:00:00.000Z",
+      "modified": "2023-06-01T12:00:00.000Z",
+      "headers": [
+        {
+          "name": "Authorization",
+          "value": "Bearer YOUR_JWT_TOKEN_HERE"
+        }
+      ],
+      "params": [],
+      "tests": []
+    }
+  ]
+} 

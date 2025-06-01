@@ -21,6 +21,7 @@
     "jsonwebtoken": "^9.0.2",
     "mongoose": "^8.13.2",
     "mongoose-timestamp": "^0.6.0",
+    "openai": "^5.0.1",
     "socket.io": "^4.8.1",
     "socket.io-client": "^4.8.1"
   },

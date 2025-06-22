@@ -705,7 +705,12 @@ const corsOptions = {
     'http://localhost:19000',
     'http://10.0.2.2:19000',
     'exp://*',
-    'file://*'
+    'file://*',
+    // Production server URL
+    'https://mrenglishserverside.onrender.com',
+    // Allow all origins for React Native apps
+    'capacitor://*',
+    'ionic://*'
   ],
   methods: ['GET', 'POST', 'PUT', 'DELETE', 'OPTIONS'],
   allowedHeaders: ['Content-Type', 'Authorization', 'Accept'],

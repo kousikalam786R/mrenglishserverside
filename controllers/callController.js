@@ -1,5 +1,6 @@
 const CallHistory = require('../models/CallHistory');
 const User = require('../models/User');
+const mongoose = require('mongoose');
 // Remove the static Call import since we'll use dynamic requires
 // const Call = require('../models/Call');
 
@@ -32,6 +33,7 @@ exports.callAnswered = async (callHistoryId) => {
     }
     
     callHistory.status = 'answered';
+    callHistory.startTime = new Date();  // Set the start time when call is answered
     await callHistory.save();
     
     return callHistory;
@@ -90,7 +92,7 @@ exports.endCall = async (callHistoryId, endedBy) => {
 // Get call history for a user
 exports.getCallHistory = async (req, res) => {
   try {
-    const userId = req.user.id;
+    const userId = req.user._id || req.user.id;
     
     // Find calls where user is either caller or receiver
     const callHistory = await CallHistory.find({
@@ -166,7 +168,7 @@ exports.updateCallToVideo = async (userId, otherUserId) => {
     }
     
     // Fall back to CallHistory if Call model didn't work or no result found
-    try {
+    try { 
       result = await CallHistory.findOneAndUpdate(
         { 
           $or: [
@@ -191,5 +193,83 @@ exports.updateCallToVideo = async (userId, otherUserId) => {
   } catch (error) {
     console.error('Error updating call to video:', error);
     throw error;
+  }
+};
+
+// Get call details by call ID
+exports.getCallDetails = async (req, res) => {
+  try {
+    const { callId } = req.params;
+    
+    console.log('Getting call details for callId:', callId);
+    console.log('User requesting:', req.user._id);
+    
+    // Validate callId
+    if (!callId || !mongoose.Types.ObjectId.isValid(callId)) {
+      console.log('Invalid call ID format');
+      return res.status(400).json({
+        success: false,
+        message: 'Invalid call ID'
+      });
+    }
+
+    // Find the call in CallHistory
+    const call = await CallHistory.findById(callId)
+      .populate('caller', 'name email')
+      .populate('receiver', 'name email');
+
+    if (!call) {
+      console.log('Call not found in database for ID:', callId);
+      return res.status(404).json({
+        success: false,
+        message: 'Call not found'
+      });
+    }
+    
+    console.log('Call found:', {
+      id: call._id,
+      caller: call.caller._id,
+      receiver: call.receiver._id,
+      startTime: call.startTime,
+      status: call.status
+    });
+
+    // Check if user has permission to view this call
+    const userId = req.user._id.toString();
+    if (call.caller._id.toString() !== userId && call.receiver._id.toString() !== userId) {
+      return res.status(403).json({
+        success: false,
+        message: 'Access denied'
+      });
+    }
+
+    res.status(200).json({
+      success: true,
+      data: {
+        _id: call._id,
+        startTime: call.startTime,
+        endTime: call.endTime,
+        duration: call.duration,
+        isVideoCall: call.isVideoCall,
+        status: call.status,
+        caller: {
+          _id: call.caller._id,
+          name: call.caller.name,
+          email: call.caller.email
+        },
+        receiver: {
+          _id: call.receiver._id,
+          name: call.receiver.name,
+          email: call.receiver.email
+        }
+      }
+    });
+  } catch (error) {
+    console.error('Error getting call details:', error);
+    res.status(500).json({
+      success: false,
+      message: 'Server error',
+      error: error.message
+    });
   }
 }; 

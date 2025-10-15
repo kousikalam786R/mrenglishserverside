@@ -750,6 +750,9 @@ app.use('/api/messages', require('./routes/messageRoutes'));
 const expressCallRoutes = require('./routes/callRoutes');
 app.use('/api/calls', expressCallRoutes);
 app.use('/api/ai', aiRoutes);
+app.use('/api/rankings', require('./routes/rankingRoutes'));
+app.use('/api/profile', require('./routes/profileRoutes'));
+app.use('/api/ratings', require('./routes/ratingRoutes'));
 
 // Simple test endpoint for connectivity testing
 app.get('/test', (req, res) => {

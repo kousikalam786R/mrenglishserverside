@@ -17,11 +17,42 @@ const userSchema = new mongoose.Schema({
     type: String,
     select: false,
   },
+  // Profile information
+  bio: {
+    type: String,
+    trim: true,
+    maxlength: 500,
+  },
+  age: {
+    type: Number,
+    min: 13,
+    max: 120,
+  },
+  gender: {
+    type: String,
+    enum: ['Male', 'Female', 'Other', 'Prefer not to say'],
+  },
   country: {
     type: String,
-    required: false,
     trim: true,
   },
+  nativeLanguage: {
+    type: String,
+    trim: true,
+  },
+  englishLevel: {
+    type: String,
+    enum: ['A1', 'A2', 'B1', 'B2', 'C1', 'C2'],
+    default: 'A2',
+  },
+  interests: [{
+    type: String,
+    trim: true,
+  }],
+  profilePic: {
+    type: String,
+  },
+  // Authentication fields
   googleId: {
     type: String,
     unique: true,
@@ -30,9 +61,7 @@ const userSchema = new mongoose.Schema({
   idToken: {
     type: String,
   },
-  profilePic: {
-    type: String,
-  },
+  // Timestamps
   createdAt: {
     type: Date,
     default: Date.now,

@@ -172,14 +172,40 @@ exports.signup = async (req, res) => {
     console.log('Request headers:', req.headers);
     console.log('Request body:', req.body);
     
-    const { name, email, password } = req.body || {};
+    const { 
+      name, 
+      email, 
+      password, 
+      bio, 
+      age, 
+      country, 
+      nativeLanguage, 
+      englishLevel, 
+      interests 
+    } = req.body || {};
     
-    // Validate input
+    // Validate required input
     if (!name || !email || !password) {
       return res.status(400).json({ 
         success: false,
         message: 'Please provide name, email and password',
         receivedData: { name, email, passwordReceived: !!password }
+      });
+    }
+    
+    // Validate age if provided
+    if (age && (age < 13 || age > 120)) {
+      return res.status(400).json({
+        success: false,
+        message: 'Age must be between 13 and 120'
+      });
+    }
+    
+    // Validate English level if provided
+    if (englishLevel && !['A1', 'A2', 'B1', 'B2', 'C1', 'C2'].includes(englishLevel)) {
+      return res.status(400).json({
+        success: false,
+        message: 'Invalid English level. Must be one of: A1, A2, B1, B2, C1, C2'
       });
     }
     
@@ -192,11 +218,17 @@ exports.signup = async (req, res) => {
       });
     }
     
-    // Create new user
+    // Create new user with profile data
     const user = await User.create({
       name,
       email,
       password,
+      bio: bio || '',
+      age: age || undefined,
+      country: country || '',
+      nativeLanguage: nativeLanguage || '',
+      englishLevel: englishLevel || 'A2',
+      interests: interests || [],
     });
     
     // Generate JWT token

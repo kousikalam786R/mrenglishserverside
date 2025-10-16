@@ -132,6 +132,7 @@ exports.updateProfile = async (req, res) => {
 exports.getUserStats = async (req, res) => {
   try {
     const CallHistory = require('../models/CallHistory');
+    const mongoose = require('mongoose');
     
     // Get or create user stats
     let userStats = await UserStats.findOne({ user: req.user.id });
@@ -139,13 +140,16 @@ exports.getUserStats = async (req, res) => {
       userStats = await UserStats.create({ user: req.user.id });
     }
     
+    // Convert user ID to ObjectId for aggregation query
+    const userObjectId = new mongoose.Types.ObjectId(req.user.id);
+    
     // Get user's call statistics
     const callStats = await CallHistory.aggregate([
       {
         $match: {
           $or: [
-            { caller: req.user.id },
-            { receiver: req.user.id }
+            { caller: userObjectId },
+            { receiver: userObjectId }
           ],
           status: 'answered'
         }
@@ -163,8 +167,8 @@ exports.getUserStats = async (req, res) => {
     // Get recent activity (last 10 calls)
     const recentActivity = await CallHistory.find({
       $or: [
-        { caller: req.user.id },
-        { receiver: req.user.id }
+        { caller: userObjectId },
+        { receiver: userObjectId }
       ],
       status: 'answered'
     })

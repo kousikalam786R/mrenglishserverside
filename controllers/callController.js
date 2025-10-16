@@ -95,16 +95,19 @@ exports.getCallHistory = async (req, res) => {
     const userId = req.user._id || req.user.id;
     
     // Find calls where user is either caller or receiver
+    // Only include answered calls with duration >= 60 seconds (1 minute or more)
     const callHistory = await CallHistory.find({
       $or: [
         { caller: userId },
         { receiver: userId }
-      ]
+      ],
+      status: 'answered',
+      duration: { $gte: 60 }  // Only calls that lasted 1 minute or more
     })
     .populate('caller', 'name profilePic')
     .populate('receiver', 'name profilePic')
     .sort({ startTime: -1 })
-    .limit(50);
+    .limit(100);  // Increased limit since we're filtering
     
     return res.status(200).json(callHistory);
   } catch (error) {

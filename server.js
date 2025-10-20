@@ -12,9 +12,17 @@ const Message = require('./models/Message');
 const { setOnlineUsersMap, getReadyToTalkUsers, setUserReadyToTalk, clearUserReadyToTalk, getUserSocketId } = require('./utils/onlineUsers');
 const aiRoutes = require('./routes/aiRoutes');
 const aiService = require('./utils/aiService');
+const pushNotificationService = require('./utils/pushNotificationService');
+const dailyReminderService = require('./utils/dailyReminderService');
 
 // Connect to database
 connectDB();
+
+// Initialize Push Notification Service
+pushNotificationService.initialize();
+
+// Start Daily Reminder Service
+dailyReminderService.start();
 
 const app = express();
 const server = http.createServer(app);
@@ -118,6 +126,9 @@ io.on('connection', (socket) => {
     userId: socket.userId,
     status: 'online'
   });
+
+  // Update user activity for daily reminders
+  dailyReminderService.updateUserActivity(socket.userId);
   } else {
     console.warn('Socket connected without userId');
   }
@@ -125,7 +136,7 @@ io.on('connection', (socket) => {
   // WebRTC Call Signaling - Call Offer
   socket.on('call-offer', async (data) => {
     try {
-      const { targetUserId, sdp, type, isVideo, renegotiation } = data;
+      const { targetUserId, sdp, type, isVideo, renegotiation, isPartnerMatching } = data;
       
       // Check if this is a renegotiation or a new call
       if (renegotiation) {
@@ -164,7 +175,7 @@ io.on('connection', (socket) => {
       }
       
       // Original code for new calls
-      console.log(`Call offer from ${socket.userId} to ${targetUserId}`, isVideo ? '(video)' : '(audio)');
+      console.log(`Call offer from ${socket.userId} to ${targetUserId}`, isVideo ? '(video)' : '(audio)', isPartnerMatching ? '(partner matching)' : '(regular)');
       
       // Record call attempt in database
       const callHistory = await callController.recordCallAttempt(socket.userId, targetUserId, isVideo);
@@ -180,7 +191,8 @@ io.on('connection', (socket) => {
           sdp,
           type,
           isVideo,
-          callHistoryId: callHistory?._id
+          callHistoryId: callHistory?._id,
+          isPartnerMatching: isPartnerMatching || false
         });
         
         // Notify caller that the offer was sent
@@ -189,14 +201,36 @@ io.on('connection', (socket) => {
           targetUserId,
           callHistoryId: callHistory?._id
         });
+        
+        // Send push notification for incoming call
+        await pushNotificationService.sendCallNotification(
+          targetUserId,
+          {
+            _id: socket.userId,
+            name: socket.user.name,
+            profilePic: socket.user.profilePic
+          },
+          isVideo
+        );
       } else {
-        // Target user is offline
+        // Target user is offline - still send push notification
         socket.emit('call-offer-sent', { 
           success: false, 
           error: 'User is offline',
           targetUserId,
           callHistoryId: callHistory?._id
         });
+        
+        // Send push notification even if user is offline
+        await pushNotificationService.sendCallNotification(
+          targetUserId,
+          {
+            _id: socket.userId,
+            name: socket.user.name,
+            profilePic: socket.user.profilePic
+          },
+          isVideo
+        );
       }
     } catch (error) {
       console.error('Error processing call offer:', error);
@@ -242,6 +276,19 @@ io.on('connection', (socket) => {
           await callController.callAnswered(callHistoryId);
         } else {
           await callController.callRejected(callHistoryId);
+          
+          // Send missed call notification to caller when call is rejected
+          await pushNotificationService.sendMissedCallNotification(
+            targetUserId,
+            {
+              _id: socket.userId,
+              name: socket.user.name,
+              profilePic: socket.user.profilePic
+            },
+            false // Will get actual video status from call history if needed
+          );
+          
+          console.log(`📞 Sent missed call notification to caller ${targetUserId}`);
         }
       }
       
@@ -289,12 +336,33 @@ io.on('connection', (socket) => {
   // WebRTC Call Signaling - End Call
   socket.on('call-end', async (data) => {
     try {
-      const { targetUserId, callHistoryId } = data;
-      console.log(`Call ended by ${socket.userId} to ${targetUserId}`);
+      const { targetUserId, callHistoryId, reason } = data;
+      console.log(`Call ended by ${socket.userId} to ${targetUserId}, reason: ${reason || 'normal'}`);
       
       // Update call history in database
       if (callHistoryId) {
         await callController.endCall(callHistoryId, socket.userId);
+        
+        // If call ended due to timeout/no answer, send missed call notification
+        if (reason === 'timeout' || reason === 'no_answer') {
+          const CallHistory = require('./models/CallHistory');
+          const callHistory = await CallHistory.findById(callHistoryId).populate('caller receiver');
+          
+          if (callHistory && callHistory.status === 'missed') {
+            // Send missed call notification to receiver (who missed the call)
+            await pushNotificationService.sendMissedCallNotification(
+              callHistory.receiver._id,
+              {
+                _id: callHistory.caller._id,
+                name: callHistory.caller.name,
+                profilePic: callHistory.caller.profilePic
+              },
+              callHistory.isVideoCall
+            );
+            
+            console.log(`📞 Sent missed call notification for timeout to ${callHistory.receiver._id}`);
+          }
+        }
       }
       
       // Get target user socket
@@ -304,7 +372,8 @@ io.on('connection', (socket) => {
         // Notify target that call has ended
         targetSocket.emit('call-end', {
           endedBy: socket.userId,
-          callHistoryId
+          callHistoryId,
+          reason
         });
       }
     } catch (error) {
@@ -318,11 +387,15 @@ io.on('connection', (socket) => {
       const { receiverId, content } = data;
       const senderId = socket.user._id;
       
-      // Log all message attempts
-      console.log(`Message attempt: From ${senderId} to ${receiverId}: ${content.substring(0, 20)}...`);
+      console.log(`\n📨 MESSAGE FLOW STARTED`);
+      console.log(`===============================`);
+      console.log(`📤 From: ${socket.user.name} (${senderId})`);
+      console.log(`📥 To: ${receiverId}`);
+      console.log(`💬 Content: "${content.substring(0, 50)}${content.length > 50 ? '...' : ''}"`);
       
       // Basic validation
       if (!content || !receiverId) {
+        console.log(`❌ Validation failed: Missing required fields`);
         socket.emit('message-sent', { 
           success: false, 
           error: 'Missing required fields' 
@@ -333,13 +406,27 @@ io.on('connection', (socket) => {
       // Check if receiver ID is a valid MongoDB ObjectId
       const isValidObjectId = /^[0-9a-fA-F]{24}$/.test(receiverId);
       if (!isValidObjectId) {
-        console.log(`Invalid receiver ID format: ${receiverId}`);
+        console.log(`❌ Invalid receiver ID format: ${receiverId}`);
         socket.emit('message-sent', { 
           success: false, 
           error: 'Invalid receiver ID format' 
         });
         return;
       }
+      
+      // Check if receiver exists
+      const receiver = await User.findById(receiverId).select('name fcmToken');
+      if (!receiver) {
+        console.log(`❌ Receiver not found in database: ${receiverId}`);
+        socket.emit('message-sent', { 
+          success: false, 
+          error: 'Receiver not found' 
+        });
+        return;
+      }
+      
+      console.log(`👤 Receiver found: ${receiver.name}`);
+      console.log(`🔑 Receiver has FCM token: ${receiver.fcmToken ? 'YES' : 'NO'}`);
       
       // Save the message to the database
       const newMessage = new Message({
@@ -350,6 +437,7 @@ io.on('connection', (socket) => {
       });
       
       await newMessage.save();
+      console.log(`💾 Message saved to database: ${newMessage._id}`);
       
       // Populate sender and receiver info
       await newMessage.populate('sender', 'name profilePic');
@@ -357,22 +445,42 @@ io.on('connection', (socket) => {
       
       // Get receiver socket (if online)
       const receiverSocket = getUserSocket(receiverId);
+      console.log(`🔌 Receiver online status: ${receiverSocket ? 'ONLINE' : 'OFFLINE'}`);
       
-      // Notify the receiver
+      // Notify the receiver if online
       if (receiverSocket) {
+        console.log(`📡 Sending real-time socket message to receiver...`);
         receiverSocket.emit('new-message', {
           from: socket.user,
           message: newMessage
         });
+        console.log(`✅ Real-time message sent via socket`);
       }
+      
+      // Send push notification (works even if user is offline)
+      console.log(`🔔 Sending push notification to ${receiver.name}...`);
+      const notificationResult = await pushNotificationService.sendMessageNotification(
+        receiverId,
+        {
+          _id: socket.user._id,
+          name: socket.user.name,
+          profilePic: socket.user.profilePic
+        }
+      );
+      
+      console.log(`📊 Push notification result:`, notificationResult);
       
       // Send confirmation to sender
       socket.emit('message-sent', { 
         success: true, 
         message: newMessage
       });
+      
+      console.log(`✅ MESSAGE FLOW COMPLETED`);
+      console.log(`===============================\n`);
+      
     } catch (error) {
-      console.error('Error sending private message:', error);
+      console.error('❌ Error sending private message:', error);
       socket.emit('message-sent', { 
         success: false, 
         error: 'Failed to send message' 
@@ -520,10 +628,15 @@ io.on('connection', (socket) => {
       
       // Get partner's socket
       const partnerSocketId = getUserSocketId(partnerId);
+      console.log(`🔍 Looking for partner socket - Partner ID: ${partnerId}, Socket ID: ${partnerSocketId}`);
+      
       if (partnerSocketId) {
         const partnerSocket = io.sockets.sockets.get(partnerSocketId);
+        console.log(`🔍 Partner socket found: ${!!partnerSocket}, Connected: ${partnerSocket?.connected}`);
+        
         if (partnerSocket) {
           // Notify partner about the match
+          console.log(`📤 Sending partner-found to partner ${partnerId} via socket ${partnerSocketId}`);
           partnerSocket.emit('partner-found', {
             partner: {
               _id: socket.userId,
@@ -533,7 +646,22 @@ io.on('connection', (socket) => {
               readyToTalk: true
             }
           });
+          
+          // Send push notification for partner found
+          await pushNotificationService.sendPartnerFoundNotification(
+            partnerId,
+            {
+              _id: socket.userId,
+              name: socket.user?.name,
+              profilePic: socket.user?.profilePic
+            }
+          );
+        } else {
+          console.log(`❌ Partner socket not found in io.sockets.sockets for socket ID: ${partnerSocketId}`);
         }
+      } else {
+        console.log(`❌ No socket ID found for partner: ${partnerId}`);
+        console.log(`🔍 Current online users:`, Array.from(onlineUsers.entries()));
       }
     } catch (error) {
       console.error('Error finding random partner:', error);
@@ -746,6 +874,7 @@ app.use((req, res, next) => {
 // Routes
 app.use('/api/auth', require('./routes/authRoutes'));
 app.use('/api/messages', require('./routes/messageRoutes'));
+app.use('/api/notifications', require('./routes/notificationRoutes'));
 // Fix for call routes issue
 const expressCallRoutes = require('./routes/callRoutes');
 app.use('/api/calls', expressCallRoutes);

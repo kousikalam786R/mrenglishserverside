@@ -58,6 +58,27 @@ exports.submitRating = async (req, res) => {
     // Update user stats
     await updateUserStats(userId, 'rating', rating);
 
+    // Send push notification for rating received
+    const pushNotificationService = require('../utils/pushNotificationService');
+    const raterUser = await User.findById(ratedBy).select('name profilePic');
+    
+    if (raterUser) {
+      await pushNotificationService.sendFeedbackNotification(
+        userId,
+        {
+          feedbackType: 'rating',
+          feedbackBy: {
+            name: raterUser.name,
+            profilePic: raterUser.profilePic
+          },
+          rating: rating,
+          comment: comment
+        }
+      );
+      
+      console.log(`⭐ Sent rating notification to user ${userId}`);
+    }
+
     res.status(201).json({
       success: true,
       message: 'Rating submitted successfully',
@@ -77,7 +98,7 @@ exports.submitRating = async (req, res) => {
 exports.submitFeedback = async (req, res) => {
   try {
     const { userId, feedbackType, message, interactionType, interactionId } = req.body;
-    const feedbackBy = req.user._id || req.user.id;
+    const feedbackBy = req.user.id || req.user._id;
 
     console.log('Submit feedback request:', { userId, feedbackType, interactionType, interactionId, feedbackBy });
 
@@ -102,6 +123,14 @@ exports.submitFeedback = async (req, res) => {
       return res.status(400).json({
         success: false,
         message: 'Feedback type must be positive or negative'
+      });
+    }
+
+    // Validate feedbackBy
+    if (!feedbackBy) {
+      return res.status(400).json({
+        success: false,
+        message: 'Authentication required'
       });
     }
 
@@ -136,6 +165,35 @@ exports.submitFeedback = async (req, res) => {
     // Update user stats
     await updateUserStats(userId, 'feedback', feedbackType);
 
+    // Send push notification for feedback received
+    const pushNotificationService = require('../utils/pushNotificationService');
+    const feedbackGiver = await User.findById(feedbackBy).select('name profilePic');
+    
+    console.log(`🔔 Preparing feedback notification for user ${userId}`);
+    console.log(`👤 Feedback giver:`, feedbackGiver ? feedbackGiver.name : 'NOT FOUND');
+    
+    if (feedbackGiver) {
+      console.log(`📤 Sending ${feedbackType} feedback notification to user ${userId}...`);
+      
+      const notificationResult = await pushNotificationService.sendFeedbackNotification(
+        userId,
+        {
+          feedbackType: feedbackType,
+          feedbackBy: {
+            name: feedbackGiver.name,
+            profilePic: feedbackGiver.profilePic
+          },
+          message: message,
+          _id: newFeedback._id
+        }
+      );
+      
+      console.log(`📊 Notification result:`, notificationResult);
+      console.log(`💬 Sent ${feedbackType} feedback notification to user ${userId}`);
+    } else {
+      console.log(`❌ Could not send notification - feedback giver not found`);
+    }
+
     res.status(201).json({
       success: true,
       message: 'Feedback submitted successfully',
@@ -155,7 +213,7 @@ exports.submitFeedback = async (req, res) => {
 exports.submitCompliment = async (req, res) => {
   try {
     const { userId, complimentType, interactionType, interactionId } = req.body;
-    const complimentBy = req.user._id || req.user.id;
+    const complimentBy = req.user.id || req.user._id;
 
     console.log('Submit compliment request:', { userId, complimentType, interactionType, interactionId, complimentBy });
 
@@ -173,6 +231,14 @@ exports.submitCompliment = async (req, res) => {
       return res.status(400).json({
         success: false,
         message: 'Invalid user ID format'
+      });
+    }
+
+    // Validate complimentBy
+    if (!complimentBy) {
+      return res.status(400).json({
+        success: false,
+        message: 'Authentication required'
       });
     }
 
@@ -204,6 +270,26 @@ exports.submitCompliment = async (req, res) => {
     const newCompliment = await Compliment.create(complimentData);
 
     console.log('Compliment created successfully:', newCompliment);
+
+    // Send push notification for compliment received
+    const pushNotificationService = require('../utils/pushNotificationService');
+    const complimentGiver = await User.findById(complimentBy).select('name profilePic');
+    
+    if (complimentGiver) {
+      await pushNotificationService.sendFeedbackNotification(
+        userId,
+        {
+          feedbackType: 'compliment',
+          feedbackBy: {
+            name: complimentGiver.name,
+            profilePic: complimentGiver.profilePic
+          },
+          complimentType: complimentType
+        }
+      );
+      
+      console.log(`🌟 Sent compliment notification to user ${userId}`);
+    }
 
     res.status(201).json({
       success: true,
@@ -525,6 +611,14 @@ async function updateUserStats(userId, type, value) {
       { upsert: true, new: true, setDefaultsOnInsert: true }
     );
 
+    // Store previous stats for achievement checking
+    const previousStats = {
+      totalRatings: userStats.totalRatings,
+      averageRating: userStats.averageRating,
+      positiveFeedback: userStats.positiveFeedback,
+      totalFeedback: userStats.positiveFeedback + userStats.negativeFeedback
+    };
+
     if (type === 'rating') {
       userStats.updateRatingStats(value);
     } else if (type === 'feedback') {
@@ -532,8 +626,89 @@ async function updateUserStats(userId, type, value) {
     }
 
     await userStats.save();
+
+    // Check for achievements after updating stats
+    await checkAchievements(userId, userStats, previousStats);
+
   } catch (error) {
     console.error('Error updating user stats:', error);
+  }
+}
+
+// Helper function to check and notify about achievements
+async function checkAchievements(userId, currentStats, previousStats) {
+  try {
+    const pushNotificationService = require('../utils/pushNotificationService');
+    const User = require('../models/User');
+    
+    // Achievement thresholds
+    const achievements = [];
+    
+    // Rating milestones
+    if (currentStats.totalRatings >= 10 && previousStats.totalRatings < 10) {
+      achievements.push({
+        type: 'rating_milestone',
+        title: '🌟 Rating Milestone!',
+        message: 'You received 10 ratings from other learners!'
+      });
+    }
+    
+    if (currentStats.totalRatings >= 25 && previousStats.totalRatings < 25) {
+      achievements.push({
+        type: 'rating_milestone',
+        title: '⭐ Popular Learner!',
+        message: 'Amazing! You received 25 ratings!'
+      });
+    }
+    
+    if (currentStats.totalRatings >= 50 && previousStats.totalRatings < 50) {
+      achievements.push({
+        type: 'rating_milestone',
+        title: '🏆 Community Favorite!',
+        message: 'Incredible! You received 50 ratings!'
+      });
+    }
+    
+    // High rating achievement
+    if (currentStats.averageRating >= 4.5 && currentStats.totalRatings >= 5 && 
+        (previousStats.averageRating < 4.5 || previousStats.totalRatings < 5)) {
+      achievements.push({
+        type: 'excellence',
+        title: '💎 Excellence Badge!',
+        message: 'You maintain a 4.5+ star rating!'
+      });
+    }
+    
+    // Positive feedback streaks
+    const currentTotal = currentStats.positiveFeedback + currentStats.negativeFeedback;
+    const previousTotal = previousStats.totalFeedback;
+    
+    if (currentStats.positiveFeedback >= 20 && previousStats.positiveFeedback < 20) {
+      achievements.push({
+        type: 'feedback_milestone',
+        title: '👏 Positive Impact!',
+        message: 'You received 20 positive feedback!'
+      });
+    }
+    
+    // Send achievement notifications
+    for (const achievement of achievements) {
+      await pushNotificationService.sendToUser(userId, {
+        title: achievement.title,
+        body: achievement.message,
+        channelId: 'achievements',
+        data: {
+          type: 'achievement',
+          achievementType: achievement.type,
+          timestamp: new Date().toISOString()
+        }
+      });
+      
+      console.log(`🏆 Sent achievement notification to user ${userId}: ${achievement.title}`);
+    }
+    
+  } catch (error) {
+    console.error('Error checking achievements:', error);
   }
 }
 

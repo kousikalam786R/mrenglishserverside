@@ -52,6 +52,10 @@ const userSchema = new mongoose.Schema({
   profilePic: {
     type: String,
   },
+  // Push notification token
+  fcmToken: {
+    type: String,
+  },
   // Authentication fields
   googleId: {
     type: String,

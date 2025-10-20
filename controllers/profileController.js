@@ -193,12 +193,23 @@ exports.getUserStats = async (req, res) => {
     
     const stats = callStats[0] || { totalCalls: 0, totalDuration: 0, averageCallDuration: 0 };
     
+    // Store previous stats for achievement checking
+    const previousStats = {
+      totalCalls: userStats.totalCalls,
+      totalMinutes: userStats.totalMinutes,
+      totalHours: userStats.totalHours,
+      totalPoints: userStats.totalPoints
+    };
+
     // Update user stats with latest call data
     userStats.totalCalls = stats.totalCalls;
     userStats.totalMinutes = Math.floor(stats.totalDuration / 60);
     userStats.totalHours = Math.floor(stats.totalDuration / 3600);
     userStats.totalPoints = Math.floor(stats.totalDuration / 60) * 10; // 10 points per minute
     await userStats.save();
+
+    // Check for call-based achievements
+    await checkCallAchievements(req.user.id, userStats, previousStats);
     
     res.status(200).json({
       success: true,
@@ -227,6 +238,102 @@ exports.getUserStats = async (req, res) => {
     });
   }
 };
+
+// Helper function to check and notify about call achievements
+async function checkCallAchievements(userId, currentStats, previousStats) {
+  try {
+    const pushNotificationService = require('../utils/pushNotificationService');
+    
+    // Achievement thresholds
+    const achievements = [];
+    
+    // Call milestones
+    if (currentStats.totalCalls >= 5 && previousStats.totalCalls < 5) {
+      achievements.push({
+        type: 'call_milestone',
+        title: '📞 First Steps!',
+        message: 'You completed 5 practice calls!'
+      });
+    }
+    
+    if (currentStats.totalCalls >= 25 && previousStats.totalCalls < 25) {
+      achievements.push({
+        type: 'call_milestone',
+        title: '🗣️ Conversation Pro!',
+        message: 'Amazing! You completed 25 calls!'
+      });
+    }
+    
+    if (currentStats.totalCalls >= 100 && previousStats.totalCalls < 100) {
+      achievements.push({
+        type: 'call_milestone',
+        title: '💬 Chatmaster!',
+        message: 'Incredible! 100 practice calls completed!'
+      });
+    }
+    
+    // Hour milestones
+    if (currentStats.totalHours >= 5 && previousStats.totalHours < 5) {
+      achievements.push({
+        type: 'time_milestone',
+        title: '⏱️ Dedicated Learner!',
+        message: 'You practiced for 5 hours total!'
+      });
+    }
+    
+    if (currentStats.totalHours >= 25 && previousStats.totalHours < 25) {
+      achievements.push({
+        type: 'time_milestone',
+        title: '🕐 Practice Champion!',
+        message: 'Wow! 25 hours of English practice!'
+      });
+    }
+    
+    if (currentStats.totalHours >= 100 && previousStats.totalHours < 100) {
+      achievements.push({
+        type: 'time_milestone',
+        title: '🏅 English Master!',
+        message: 'Legendary! 100 hours of practice!'
+      });
+    }
+    
+    // Points milestones
+    if (currentStats.totalPoints >= 1000 && previousStats.totalPoints < 1000) {
+      achievements.push({
+        type: 'points_milestone',
+        title: '🎯 Point Collector!',
+        message: 'You earned 1,000 practice points!'
+      });
+    }
+    
+    if (currentStats.totalPoints >= 5000 && previousStats.totalPoints < 5000) {
+      achievements.push({
+        type: 'points_milestone',
+        title: '💰 Point Master!',
+        message: 'Incredible! 5,000 practice points!'
+      });
+    }
+    
+    // Send achievement notifications
+    for (const achievement of achievements) {
+      await pushNotificationService.sendToUser(userId, {
+        title: achievement.title,
+        body: achievement.message,
+        channelId: 'achievements',
+        data: {
+          type: 'achievement',
+          achievementType: achievement.type,
+          timestamp: new Date().toISOString()
+        }
+      });
+      
+      console.log(`🏆 Sent call achievement notification to user ${userId}: ${achievement.title}`);
+    }
+    
+  } catch (error) {
+    console.error('Error checking call achievements:', error);
+  }
+}
 
 // Get available options for dropdowns
 exports.getProfileOptions = async (req, res) => {

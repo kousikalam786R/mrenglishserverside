@@ -74,6 +74,24 @@ const userSchema = new mongoose.Schema({
     type: Date,
     default: Date.now,
   },
+  // Enhanced presence tracking
+  lastSeenAt: {
+    type: Date,
+    default: Date.now,
+  },
+  isOnline: {
+    type: Boolean,
+    default: false,
+  },
+  // Typing status tracking
+  isTyping: {
+    type: Boolean,
+    default: false,
+  },
+  typingInChat: {
+    type: String, // Chat ID where user is typing
+    default: null,
+  },
 });
 
 // Pre-save middleware to hash passwords

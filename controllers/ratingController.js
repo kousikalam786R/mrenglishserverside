@@ -169,13 +169,8 @@ exports.submitFeedback = async (req, res) => {
     const pushNotificationService = require('../utils/pushNotificationService');
     const feedbackGiver = await User.findById(feedbackBy).select('name profilePic');
     
-    console.log(`🔔 Preparing feedback notification for user ${userId}`);
-    console.log(`👤 Feedback giver:`, feedbackGiver ? feedbackGiver.name : 'NOT FOUND');
-    
     if (feedbackGiver) {
-      console.log(`📤 Sending ${feedbackType} feedback notification to user ${userId}...`);
-      
-      const notificationResult = await pushNotificationService.sendFeedbackNotification(
+      await pushNotificationService.sendFeedbackNotification(
         userId,
         {
           feedbackType: feedbackType,
@@ -183,15 +178,11 @@ exports.submitFeedback = async (req, res) => {
             name: feedbackGiver.name,
             profilePic: feedbackGiver.profilePic
           },
-          message: message,
-          _id: newFeedback._id
+          message: message
         }
       );
       
-      console.log(`📊 Notification result:`, notificationResult);
       console.log(`💬 Sent ${feedbackType} feedback notification to user ${userId}`);
-    } else {
-      console.log(`❌ Could not send notification - feedback giver not found`);
     }
 
     res.status(201).json({

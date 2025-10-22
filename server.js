@@ -112,23 +112,36 @@ io.use(async (socket, next) => {
 });
 
 // Socket.io connection handling
-io.on('connection', (socket) => {
+io.on('connection', async (socket) => {
   console.log(`User connected: ${socket.userId} with socket ID: ${socket.id}`);
   
   // Add user to online users map
   if (socket.userId) {
-  onlineUsers.set(socket.userId.toString(), socket.id);
+    onlineUsers.set(socket.userId.toString(), socket.id);
     console.log(`Added user ${socket.userId} to online users map. Total online: ${onlineUsers.size}`);
     console.log('Current online users:', Array.from(onlineUsers.keys()));
   
-  // Broadcast online status to all connected clients
-  io.emit('user-status', {
-    userId: socket.userId,
-    status: 'online'
-  });
+    // Update user's online status and lastSeenAt in database
+    try {
+      await User.findByIdAndUpdate(socket.userId, {
+        isOnline: true,
+        lastSeenAt: new Date(),
+        lastLoginAt: new Date()
+      });
+      console.log(`✅ Updated user ${socket.userId} online status in database`);
+    } catch (error) {
+      console.error(`❌ Error updating user online status:`, error);
+    }
+  
+    // Broadcast online status to all connected clients
+    io.emit('user-status', {
+      userId: socket.userId,
+      status: 'online',
+      lastSeen: new Date()
+    });
 
-  // Update user activity for daily reminders
-  dailyReminderService.updateUserActivity(socket.userId);
+    // Update user activity for daily reminders
+    dailyReminderService.updateUserActivity(socket.userId);
   } else {
     console.warn('Socket connected without userId');
   }
@@ -428,33 +441,49 @@ io.on('connection', (socket) => {
       console.log(`👤 Receiver found: ${receiver.name}`);
       console.log(`🔑 Receiver has FCM token: ${receiver.fcmToken ? 'YES' : 'NO'}`);
       
-      // Save the message to the database
+      // Save the message to the database with enhanced status
       const newMessage = new Message({
         sender: senderId,
         receiver: receiverId,
         content,
-        read: false
+        status: 'sent',
+        sentAt: new Date(),
+        read: false // Keep for backward compatibility
       });
       
       await newMessage.save();
       console.log(`💾 Message saved to database: ${newMessage._id}`);
       
       // Populate sender and receiver info
-      await newMessage.populate('sender', 'name profilePic');
-      await newMessage.populate('receiver', 'name profilePic');
+      await newMessage.populate('sender', 'name profilePic isOnline lastSeenAt');
+      await newMessage.populate('receiver', 'name profilePic isOnline lastSeenAt');
       
       // Get receiver socket (if online)
       const receiverSocket = getUserSocket(receiverId);
       console.log(`🔌 Receiver online status: ${receiverSocket ? 'ONLINE' : 'OFFLINE'}`);
       
-      // Notify the receiver if online
+      // Update message status based on receiver online status
       if (receiverSocket) {
+        // Mark as delivered since user is online
+        newMessage.status = 'delivered';
+        newMessage.deliveredAt = new Date();
+        await newMessage.save();
+        
         console.log(`📡 Sending real-time socket message to receiver...`);
         receiverSocket.emit('new-message', {
           from: socket.user,
           message: newMessage
         });
-        console.log(`✅ Real-time message sent via socket`);
+        
+        // Send delivery confirmation to sender
+        socket.emit('message-delivered', {
+          messageId: newMessage._id,
+          deliveredAt: newMessage.deliveredAt
+        });
+        
+        console.log(`✅ Real-time message sent via socket - marked as delivered`);
+      } else {
+        console.log(`📤 Receiver offline - message remains as 'sent' status`);
       }
       
       // Send push notification (works even if user is offline)
@@ -488,26 +517,124 @@ io.on('connection', (socket) => {
     }
   });
   
-  // Handle typing indicator
-  socket.on('typing', (data) => {
-    const { receiverId } = data;
-    const receiverSocketId = onlineUsers.get(receiverId.toString());
-    
-    if (receiverSocketId) {
-      io.to(receiverSocketId).emit('user-typing', {
-        userId: socket.userId.toString()
+  // Enhanced typing indicators
+  socket.on('typing', async (data) => {
+    try {
+      const { receiverId } = data;
+      const receiverSocketId = onlineUsers.get(receiverId.toString());
+      
+      // Update user's typing status in database
+      await User.findByIdAndUpdate(socket.userId, {
+        isTyping: true,
+        typingInChat: receiverId,
+        lastSeenAt: new Date() // Update activity
       });
+      
+      if (receiverSocketId) {
+        io.to(receiverSocketId).emit('user-typing', {
+          userId: socket.userId.toString(),
+          userName: socket.user.name,
+          chatId: receiverId
+        });
+        console.log(`⌨️  ${socket.user.name} started typing to ${receiverId}`);
+      }
+    } catch (error) {
+      console.error('Error handling typing indicator:', error);
     }
   });
   
-  socket.on('typing-stopped', (data) => {
-    const { receiverId } = data;
-    const receiverSocketId = onlineUsers.get(receiverId.toString());
-    
-    if (receiverSocketId) {
-      io.to(receiverSocketId).emit('typing-stopped', {
-        userId: socket.userId.toString()
+  socket.on('typing-stopped', async (data) => {
+    try {
+      const { receiverId } = data;
+      const receiverSocketId = onlineUsers.get(receiverId.toString());
+      
+      // Update user's typing status in database
+      await User.findByIdAndUpdate(socket.userId, {
+        isTyping: false,
+        typingInChat: null,
+        lastSeenAt: new Date() // Update activity
       });
+      
+      if (receiverSocketId) {
+        io.to(receiverSocketId).emit('typing-stopped', {
+          userId: socket.userId.toString(),
+          userName: socket.user.name,
+          chatId: receiverId
+        });
+        console.log(`⌨️  ${socket.user.name} stopped typing to ${receiverId}`);
+      }
+    } catch (error) {
+      console.error('Error handling typing stopped:', error);
+    }
+  });
+  
+  // Handle message read receipts
+  socket.on('mark-message-read', async (data) => {
+    try {
+      const { messageId, senderId } = data;
+      
+      // Update message as read
+      const updatedMessage = await Message.findByIdAndUpdate(
+        messageId,
+        {
+          status: 'read',
+          read: true, // For backward compatibility
+          readAt: new Date()
+        },
+        { new: true }
+      );
+      
+      if (updatedMessage) {
+        console.log(`✅ Message ${messageId} marked as read`);
+        
+        // Notify sender that message was read
+        const senderSocketId = onlineUsers.get(senderId.toString());
+        if (senderSocketId) {
+          io.to(senderSocketId).emit('message-read', {
+            messageId: messageId,
+            readAt: updatedMessage.readAt,
+            readBy: socket.userId
+          });
+        }
+      }
+    } catch (error) {
+      console.error('Error marking message as read:', error);
+    }
+  });
+  
+  // Handle user activity updates (for last seen)
+  socket.on('user-activity', async () => {
+    try {
+      await User.findByIdAndUpdate(socket.userId, {
+        lastSeenAt: new Date(),
+        isOnline: true
+      });
+    } catch (error) {
+      console.error('Error updating user activity:', error);
+    }
+  });
+
+  // Handle get user status request
+  socket.on('get-user-status', async (data) => {
+    try {
+      const { userId } = data;
+      if (!userId) return;
+
+      console.log(`📡 User ${socket.userId} requesting status for user ${userId}`);
+      
+      const user = await User.findById(userId);
+      if (user) {
+        // Send current user status
+        socket.emit('user-status', {
+          userId: userId,
+          status: user.isOnline ? 'online' : 'offline',
+          lastSeen: user.lastSeenAt
+        });
+        
+        console.log(`📡 Sent user status for ${userId}: ${user.isOnline ? 'online' : 'offline'}`);
+      }
+    } catch (error) {
+      console.error('Error getting user status:', error);
     }
   });
   
@@ -742,25 +869,39 @@ io.on('connection', (socket) => {
   });
   
   // Handle disconnect - update to also clear ready-to-talk status
-  socket.on('disconnect', () => {
+  socket.on('disconnect', async () => {
     if (socket.userId) {
       console.log(`User disconnected: ${socket.userId} with socket ID: ${socket.id}`);
     
       // Check if this user has another socket connection before removing
       const currentSocketId = onlineUsers.get(socket.userId.toString());
       if (currentSocketId === socket.id) {
+        try {
+          // Update user's offline status and last seen in database
+          await User.findByIdAndUpdate(socket.userId, {
+            isOnline: false,
+            lastSeenAt: new Date(),
+            isTyping: false,
+            typingInChat: null
+          });
+          console.log(`✅ Updated user ${socket.userId} offline status in database`);
+        } catch (error) {
+          console.error(`❌ Error updating user offline status:`, error);
+        }
+        
         // Remove user from online users map only if this is the socket that put them online
-    onlineUsers.delete(socket.userId.toString());
+        onlineUsers.delete(socket.userId.toString());
         console.log(`Removed user ${socket.userId} from online users map. Total online: ${onlineUsers.size}`);
         
         // Clear ready to talk status
         clearUserReadyToTalk(socket.userId);
     
-    // Broadcast offline status to all connected clients
-    io.emit('user-status', {
-      userId: socket.userId,
-      status: 'offline'
-    });
+        // Broadcast offline status to all connected clients with last seen
+        io.emit('user-status', {
+          userId: socket.userId,
+          status: 'offline',
+          lastSeen: new Date()
+        });
         
         // Broadcast ready status change
         broadcastReadyToTalkStatus(socket.userId, false);

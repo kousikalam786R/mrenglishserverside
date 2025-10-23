@@ -624,7 +624,7 @@ io.on('connection', async (socket) => {
       
       const user = await User.findById(userId);
       if (user) {
-        // Send current user status
+        // Send current user status in the format expected by the client
         socket.emit('user-status', {
           userId: userId,
           status: user.isOnline ? 'online' : 'offline',

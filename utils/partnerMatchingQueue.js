@@ -26,7 +26,7 @@ class PartnerMatchingQueue {
     // Remove user if already in queue
     this.removeFromQueue(userId);
     
-    // Add user to queue
+    // Add user to queue with preferences
     this.waitingUsers.set(userId, {
       userId,
       socketId,
@@ -35,12 +35,15 @@ class PartnerMatchingQueue {
         profilePic: userData.profilePic,
         level: userData.level,
         country: userData.country,
-        gender: userData.gender
+        gender: userData.gender,
+        rating: userData.rating || 0
       },
       preferences: {
-        level: preferences.level || null,
-        gender: preferences.gender || null,
-        country: preferences.country || null
+        gender: preferences.gender || 'all',
+        ratingMin: preferences.ratingMin || 0,
+        ratingMax: preferences.ratingMax || 100,
+        levelMin: preferences.levelMin || 'A1',
+        levelMax: preferences.levelMax || 'C2'
       },
       timestamp: Date.now()
     });
@@ -108,40 +111,55 @@ class PartnerMatchingQueue {
    * Check if two users are a good match based on preferences
    */
   isGoodMatch(user1, user2) {
-    // Check user1's preferences against user2
-    if (user1.preferences.level && user2.userData.level) {
-      if (user1.preferences.level !== user2.userData.level) {
+    // Define level order for comparison
+    const levelOrder = ['A1', 'A2', 'B1', 'B2', 'C1', 'C2'];
+    
+    // Check user1's gender preference against user2
+    if (user1.preferences.gender !== 'all' && user2.userData.gender) {
+      const preferredGender = user1.preferences.gender.charAt(0).toUpperCase() + user1.preferences.gender.slice(1);
+      if (user2.userData.gender !== preferredGender) {
         return false;
       }
     }
     
-    if (user1.preferences.gender && user2.userData.gender) {
-      if (user1.preferences.gender !== user2.userData.gender) {
+    // Check user1's rating preference against user2
+    const user2Rating = user2.userData.rating || 0;
+    if (user2Rating < user1.preferences.ratingMin || user2Rating > user1.preferences.ratingMax) {
+      return false;
+    }
+    
+    // Check user1's level preference against user2
+    if (user2.userData.level) {
+      const user2LevelIndex = levelOrder.indexOf(user2.userData.level);
+      const minLevelIndex = levelOrder.indexOf(user1.preferences.levelMin);
+      const maxLevelIndex = levelOrder.indexOf(user1.preferences.levelMax);
+      
+      if (user2LevelIndex < minLevelIndex || user2LevelIndex > maxLevelIndex) {
         return false;
       }
     }
     
-    if (user1.preferences.country && user2.userData.country) {
-      if (user1.preferences.country !== user2.userData.country) {
+    // Check user2's gender preference against user1
+    if (user2.preferences.gender !== 'all' && user1.userData.gender) {
+      const preferredGender = user2.preferences.gender.charAt(0).toUpperCase() + user2.preferences.gender.slice(1);
+      if (user1.userData.gender !== preferredGender) {
         return false;
       }
     }
     
-    // Check user2's preferences against user1
-    if (user2.preferences.level && user1.userData.level) {
-      if (user2.preferences.level !== user1.userData.level) {
-        return false;
-      }
+    // Check user2's rating preference against user1
+    const user1Rating = user1.userData.rating || 0;
+    if (user1Rating < user2.preferences.ratingMin || user1Rating > user2.preferences.ratingMax) {
+      return false;
     }
     
-    if (user2.preferences.gender && user1.userData.gender) {
-      if (user2.preferences.gender !== user1.userData.gender) {
-        return false;
-      }
-    }
-    
-    if (user2.preferences.country && user1.userData.country) {
-      if (user2.preferences.country !== user1.userData.country) {
+    // Check user2's level preference against user1
+    if (user1.userData.level) {
+      const user1LevelIndex = levelOrder.indexOf(user1.userData.level);
+      const minLevelIndex = levelOrder.indexOf(user2.preferences.levelMin);
+      const maxLevelIndex = levelOrder.indexOf(user2.preferences.levelMax);
+      
+      if (user1LevelIndex < minLevelIndex || user1LevelIndex > maxLevelIndex) {
         return false;
       }
     }

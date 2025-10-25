@@ -10,6 +10,7 @@ const jwt = require('jsonwebtoken');
 const User = require('./models/User');
 const Message = require('./models/Message');
 const { setOnlineUsersMap, getReadyToTalkUsers, setUserReadyToTalk, clearUserReadyToTalk, getUserSocketId } = require('./utils/onlineUsers');
+const matchingQueue = require('./utils/partnerMatchingQueue');
 const aiRoutes = require('./routes/aiRoutes');
 const aiService = require('./utils/aiService');
 const pushNotificationService = require('./utils/pushNotificationService');
@@ -702,93 +703,177 @@ io.on('connection', async (socket) => {
     }
   });
   
-  // Handle finding a random partner
-  socket.on('find-random-partner', async () => {
+  // Handle cancel partner search
+  socket.on('cancel-partner-search', () => {
     try {
-      const readyUsers = getReadyToTalkUsers();
+      console.log(`❌ User ${socket.userId} cancelled partner search`);
       
-      // Filter out the current user and convert to array
-      const otherReadyUsers = Array.from(readyUsers.entries())
-        .filter(([userId]) => userId !== socket.userId);
+      // Remove from matching queue
+      matchingQueue.removeFromQueue(socket.userId);
       
-      if (otherReadyUsers.length === 0) {
+      // Clear ready to talk status when user cancels search
+      clearUserReadyToTalk(socket.userId);
+      
+      // Broadcast the status change
+      broadcastReadyToTalkStatus(socket.userId, false);
+      
+      socket.emit('partner-search-cancelled', {
+        success: true
+      });
+      
+      console.log(`✅ User ${socket.userId} no longer ready to talk`);
+    } catch (error) {
+      console.error('Error cancelling partner search:', error);
+      socket.emit('partner-search-cancelled', {
+        success: false,
+        error: 'Failed to cancel search'
+      });
+    }
+  });
+  
+  // Handle finding a random partner - using queue system
+  socket.on('find-random-partner', async (data) => {
+    try {
+      const { preferences } = data || {};
+      
+      console.log(`🔍 User ${socket.userId} looking for partner`);
+      console.log(`🔍 Socket ID: ${socket.id}, User ID: ${socket.userId}`);
+      console.log(`🔍 Preferences:`, preferences);
+      
+      if (!socket.userId) {
+        console.log(`❌ Socket not authenticated - no userId found`);
+        socket.emit('partner-search-error', { error: 'Not authenticated' });
+        return;
+      }
+      
+      // Get user data
+      const user = await User.findById(socket.userId).select('name profilePic englishLevel country gender');
+      
+      // Save preferences to user database if provided
+      if (preferences && Object.keys(preferences).length > 0) {
+        try {
+          const updateData = {};
+          if (preferences.gender) updateData['partnerPreferences.gender'] = preferences.gender;
+          if (preferences.ratingMin !== undefined) updateData['partnerPreferences.ratingMin'] = preferences.ratingMin;
+          if (preferences.ratingMax !== undefined) updateData['partnerPreferences.ratingMax'] = preferences.ratingMax;
+          if (preferences.levelMin) updateData['partnerPreferences.levelMin'] = preferences.levelMin;
+          if (preferences.levelMax) updateData['partnerPreferences.levelMax'] = preferences.levelMax;
+          
+          await User.findByIdAndUpdate(socket.userId, { $set: updateData });
+          console.log(`✅ Saved partner preferences for user ${socket.userId}`);
+        } catch (prefError) {
+          console.error('Error saving preferences:', prefError);
+        }
+      }
+      
+      // Load saved preferences if not provided
+      let finalPreferences = preferences || {};
+      if (!preferences || Object.keys(preferences).length === 0) {
+        const userWithPrefs = await User.findById(socket.userId).select('partnerPreferences');
+        if (userWithPrefs && userWithPrefs.partnerPreferences) {
+          finalPreferences = {
+            gender: userWithPrefs.partnerPreferences.gender || 'all',
+            ratingMin: userWithPrefs.partnerPreferences.ratingMin || 0,
+            ratingMax: userWithPrefs.partnerPreferences.ratingMax || 100,
+            levelMin: userWithPrefs.partnerPreferences.levelMin || 'A1',
+            levelMax: userWithPrefs.partnerPreferences.levelMax || 'C2'
+          };
+          console.log(`📋 Loaded saved preferences:`, finalPreferences);
+        }
+      }
+      
+      if (!user) {
         socket.emit('random-partner-result', { 
           success: false,
-          error: 'No users available for matching'
+          error: 'User not found'
         });
         return;
       }
       
-      // Select a random user
-      const randomIndex = Math.floor(Math.random() * otherReadyUsers.length);
-      const [partnerId, partnerData] = otherReadyUsers[randomIndex];
-      
-      // Set the current user as ready to talk if not already
-      if (!readyUsers.has(socket.userId)) {
-        setUserReadyToTalk(socket.userId, true, {
-          name: socket.user?.name,
-          profilePic: socket.user?.profilePic
-        });
-        
-        // Broadcast the current user's status
-        broadcastReadyToTalkStatus(socket.userId, true, {
-          name: socket.user?.name,
-          profilePic: socket.user?.profilePic
-        });
-      }
-      
-      // Get partner's full user info
-      const partnerUser = await User.findById(partnerId).select('-idToken -__v');
-      
-      // Return the partner
-      socket.emit('random-partner-result', {
-        success: true,
-        partner: {
-          _id: partnerId,
-          name: partnerData.name || partnerUser?.name,
-          profilePic: partnerData.profilePic || partnerUser?.profilePic,
-          level: partnerData.level || partnerUser?.level,
-          isOnline: true,
-          readyToTalk: true
-        }
+      // ALWAYS set the current user as ready to talk when they search
+      setUserReadyToTalk(socket.userId, true, {
+        name: user.name,
+        profilePic: user.profilePic,
+        level: user.englishLevel || user.level
       });
       
-      // Get partner's socket
-      const partnerSocketId = getUserSocketId(partnerId);
-      console.log(`🔍 Looking for partner socket - Partner ID: ${partnerId}, Socket ID: ${partnerSocketId}`);
+      // Broadcast the current user's status to all clients
+      broadcastReadyToTalkStatus(socket.userId, true, {
+        name: user.name,
+        profilePic: user.profilePic,
+        level: user.englishLevel || user.level
+      });
       
-      if (partnerSocketId) {
-        const partnerSocket = io.sockets.sockets.get(partnerSocketId);
-        console.log(`🔍 Partner socket found: ${!!partnerSocket}, Connected: ${partnerSocket?.connected}`);
+      console.log(`✅ User ${socket.userId} set as ready to talk`);
+      
+      // Add user to matching queue with preferences
+      const match = matchingQueue.addToQueue(
+        socket.userId,
+        socket.id,
+        {
+          name: user.name,
+          profilePic: user.profilePic,
+          level: user.englishLevel,
+          country: user.country,
+          gender: user.gender,
+          rating: user.rating || 0
+        },
+        finalPreferences
+      );
+      
+      if (match) {
+        // Match found! Notify both users
+        console.log(`🎉 Match found between ${match.user1.userId} and ${match.user2.userId}`);
         
-        if (partnerSocket) {
-          // Notify partner about the match
-          console.log(`📤 Sending partner-found to partner ${partnerId} via socket ${partnerSocketId}`);
-          partnerSocket.emit('partner-found', {
+        const user1Socket = io.sockets.sockets.get(match.user1.socketId);
+        const user2Socket = io.sockets.sockets.get(match.user2.socketId);
+        
+        // Notify user 1
+        if (user1Socket) {
+          console.log(`📤 Notifying user 1 (${match.user1.userId}) about match`);
+          user1Socket.emit('partner-found', {
             partner: {
-              _id: socket.userId,
-              name: socket.user?.name,
-              profilePic: socket.user?.profilePic,
+              _id: match.user2.userId,
+              name: match.user2.userData.name,
+              profilePic: match.user2.userData.profilePic,
+              level: match.user2.userData.level,
+              country: match.user2.userData.country,
               isOnline: true,
               readyToTalk: true
             }
           });
-          
-          // Send push notification for partner found
-          await pushNotificationService.sendPartnerFoundNotification(
-            partnerId,
-            {
-              _id: socket.userId,
-              name: socket.user?.name,
-              profilePic: socket.user?.profilePic
+        }
+        
+        // Notify user 2
+        if (user2Socket) {
+          console.log(`📤 Notifying user 2 (${match.user2.userId}) about match`);
+          user2Socket.emit('partner-found', {
+            partner: {
+              _id: match.user1.userId,
+              name: match.user1.userData.name,
+              profilePic: match.user1.userData.profilePic,
+              level: match.user1.userData.level,
+              country: match.user1.userData.country,
+              isOnline: true,
+              readyToTalk: true
             }
-          );
-        } else {
-          console.log(`❌ Partner socket not found in io.sockets.sockets for socket ID: ${partnerSocketId}`);
+          });
         }
       } else {
-        console.log(`❌ No socket ID found for partner: ${partnerId}`);
-        console.log(`🔍 Current online users:`, Array.from(onlineUsers.entries()));
+        // No match yet, user added to queue
+        console.log(`⏳ User ${socket.userId} added to queue, waiting for partner...`);
+        
+        // Notify the user they're in the queue
+        socket.emit('partner-search-status', {
+          success: true,
+          message: 'Searching for partner...',
+          queuePosition: matchingQueue.getQueueStatus().waitingUsers
+        });
+        
+        // Send status to all clients about the queue
+        io.emit('queue-status-updated', {
+          waitingUsers: matchingQueue.getQueueStatus().waitingUsers
+        });
       }
     } catch (error) {
       console.error('Error finding random partner:', error);
@@ -892,6 +977,9 @@ io.on('connection', async (socket) => {
         // Remove user from online users map only if this is the socket that put them online
         onlineUsers.delete(socket.userId.toString());
         console.log(`Removed user ${socket.userId} from online users map. Total online: ${onlineUsers.size}`);
+        
+        // Remove from matching queue
+        matchingQueue.removeFromQueue(socket.userId);
         
         // Clear ready to talk status
         clearUserReadyToTalk(socket.userId);

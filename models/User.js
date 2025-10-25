@@ -92,6 +92,36 @@ const userSchema = new mongoose.Schema({
     type: String, // Chat ID where user is typing
     default: null,
   },
+  // Partner search preferences
+  partnerPreferences: {
+    gender: {
+      type: String,
+      enum: ['all', 'male', 'female'],
+      default: 'all'
+    },
+    ratingMin: {
+      type: Number,
+      default: 0,
+      min: 0,
+      max: 100
+    },
+    ratingMax: {
+      type: Number,
+      default: 100,
+      min: 0,
+      max: 100
+    },
+    levelMin: {
+      type: String,
+      enum: ['A1', 'A2', 'B1', 'B2', 'C1', 'C2'],
+      default: 'A1'
+    },
+    levelMax: {
+      type: String,
+      enum: ['A1', 'A2', 'B1', 'B2', 'C1', 'C2'],
+      default: 'C2'
+    }
+  }
 });
 
 // Pre-save middleware to hash passwords

@@ -1,6 +1,14 @@
 const User = require('../models/User');
+const Message = require('../models/Message');
+const CallHistory = require('../models/CallHistory');
+const Feedback = require('../models/Feedback');
+const Rating = require('../models/Rating');
+const Compliment = require('../models/Compliment');
+const Advice = require('../models/Advice');
+const UserStats = require('../models/UserStats');
 const jwt = require('jsonwebtoken');
 const { getReadyToTalkUsers, isUserReadyToTalk } = require('../utils/onlineUsers');
+const emailService = require('../utils/emailService');
 
 // Google Sign In/Sign Up
 exports.googleAuth = async (req, res) => {
@@ -114,6 +122,328 @@ exports.updateCurrentUser = async (req, res) => {
   }
 };
 
+// Change password for authenticated user
+exports.changePassword = async (req, res) => {
+  try {
+    const { currentPassword, newPassword, confirmPassword } = req.body || {};
+
+    if (!currentPassword || !newPassword || !confirmPassword) {
+      return res.status(400).json({
+        success: false,
+        message: 'Please provide current password, new password, and confirmation.'
+      });
+    }
+
+    if (newPassword.length < 8) {
+      return res.status(400).json({
+        success: false,
+        message: 'New password must be at least 8 characters long.'
+      });
+    }
+
+    if (newPassword !== confirmPassword) {
+      return res.status(400).json({
+        success: false,
+        message: 'New password and confirmation do not match.'
+      });
+    }
+
+    const user = await User.findById(req.user.id).select('+password');
+
+    if (!user) {
+      return res.status(404).json({ success: false, message: 'User not found.' });
+    }
+
+    if (!user.password) {
+      return res.status(400).json({
+        success: false,
+        message: 'Password change is not available for accounts created with Google sign-in.'
+      });
+    }
+
+    const isMatch = await user.matchPassword(currentPassword);
+
+    if (!isMatch) {
+      return res.status(401).json({ success: false, message: 'Current password is incorrect.' });
+    }
+
+    user.password = newPassword;
+    await user.save();
+
+    return res.status(200).json({
+      success: true,
+      message: 'Password updated successfully.'
+    });
+  } catch (error) {
+    console.error('Change password error:', error);
+    return res.status(500).json({
+      success: false,
+      message: 'Unable to update password. Please try again later.',
+      error: error.message,
+    });
+  }
+};
+
+// Delete account for authenticated user
+exports.deleteAccount = async (req, res) => {
+  try {
+    const { password } = req.body || {};
+
+    if (!password) {
+      return res.status(400).json({ success: false, message: 'Password is required to delete your account.' });
+    }
+
+    const user = await User.findById(req.user.id).select('+password');
+
+    if (!user) {
+      return res.status(404).json({ success: false, message: 'User not found.' });
+    }
+
+    if (!user.password) {
+      return res.status(400).json({
+        success: false,
+        message: 'Password verification is required. Please set a password before deleting your account or contact support.'
+      });
+    }
+
+    const isMatch = await user.matchPassword(password);
+
+    if (!isMatch) {
+      return res.status(401).json({ success: false, message: 'Password is incorrect.' });
+    }
+
+    const userId = user._id;
+
+    await Promise.all([
+      Message.deleteMany({ $or: [{ sender: userId }, { receiver: userId }] }).catch(() => {}),
+      CallHistory.deleteMany({ $or: [{ caller: userId }, { receiver: userId }, { endedBy: userId }] }).catch(() => {}),
+      Feedback.deleteMany({ $or: [{ user: userId }, { feedbackBy: userId }] }).catch(() => {}),
+      Rating.deleteMany({ $or: [{ user: userId }, { ratedBy: userId }] }).catch(() => {}),
+      Compliment.deleteMany({ $or: [{ user: userId }, { complimentBy: userId }] }).catch(() => {}),
+      Advice.deleteMany({ $or: [{ user: userId }, { adviceBy: userId }] }).catch(() => {}),
+      UserStats.deleteOne({ user: userId }).catch(() => {}),
+      user.deleteOne(),
+    ]);
+
+    return res.status(200).json({
+      success: true,
+      message: 'Your account has been deleted successfully.'
+    });
+  } catch (error) {
+    console.error('Delete account error:', error);
+    return res.status(500).json({
+      success: false,
+      message: 'Unable to delete account at this time. Please try again later.',
+      error: error.message,
+    });
+  }
+};
+
+// Request account deletion via email (for Google/Firebase users)
+exports.requestAccountDeletion = async (req, res) => {
+  try {
+    const user = await User.findById(req.user.id);
+
+    if (!user) {
+      return res.status(404).json({ success: false, message: 'User not found.' });
+    }
+
+    if (!user.email) {
+      return res.status(400).json({
+        success: false,
+        message: 'No email address found for this account.',
+      });
+    }
+
+    // Generate a secure token for account deletion (expires in 24 hours)
+    const deletionToken = jwt.sign(
+      { userId: user._id.toString(), purpose: 'delete-account' },
+      process.env.JWT_SECRET,
+      { expiresIn: '24h' }
+    );
+
+    // Send deletion confirmation email
+    try {
+      await emailService.sendDeletionEmail(
+        user.email,
+        user.name,
+        deletionToken
+      );
+
+      return res.status(200).json({
+        success: true,
+        message: 'A confirmation email has been sent to your email address. Please check your inbox and click the link to delete your account.',
+      });
+    } catch (emailError) {
+      console.error('Error sending deletion email:', emailError);
+      return res.status(500).json({
+        success: false,
+        message: 'Failed to send confirmation email. Please try again later or contact support.',
+        error: emailError.message,
+      });
+    }
+  } catch (error) {
+    console.error('Request account deletion error:', error);
+    return res.status(500).json({
+      success: false,
+      message: 'Unable to process deletion request. Please try again later.',
+      error: error.message,
+    });
+  }
+};
+
+// Confirm account deletion via token (from email link)
+exports.confirmAccountDeletion = async (req, res) => {
+  try {
+    const { token } = req.query || req.body || {};
+
+    if (!token) {
+      return res.status(400).json({
+        success: false,
+        message: 'Deletion token is required.',
+      });
+    }
+
+    // Verify token
+    let decoded;
+    try {
+      decoded = jwt.verify(token, process.env.JWT_SECRET);
+    } catch (jwtError) {
+      if (jwtError.name === 'TokenExpiredError') {
+        return res.status(400).json({
+          success: false,
+          message: 'The deletion link has expired. Please request a new deletion link.',
+        });
+      }
+      return res.status(400).json({
+        success: false,
+        message: 'Invalid deletion token.',
+      });
+    }
+
+    // Verify token purpose
+    if (decoded.purpose !== 'delete-account') {
+      return res.status(400).json({
+        success: false,
+        message: 'Invalid token type.',
+      });
+    }
+
+    const userId = decoded.userId;
+    const user = await User.findById(userId);
+
+    if (!user) {
+      return res.status(404).json({
+        success: false,
+        message: 'User not found. Account may have already been deleted.',
+      });
+    }
+
+    // Perform the same deletion cleanup as the password-based deletion
+    await Promise.all([
+      Message.deleteMany({ $or: [{ sender: userId }, { receiver: userId }] }).catch(() => {}),
+      CallHistory.deleteMany({ $or: [{ caller: userId }, { receiver: userId }, { endedBy: userId }] }).catch(() => {}),
+      Feedback.deleteMany({ $or: [{ user: userId }, { feedbackBy: userId }] }).catch(() => {}),
+      Rating.deleteMany({ $or: [{ user: userId }, { ratedBy: userId }] }).catch(() => {}),
+      Compliment.deleteMany({ $or: [{ user: userId }, { complimentBy: userId }] }).catch(() => {}),
+      Advice.deleteMany({ $or: [{ user: userId }, { adviceBy: userId }] }).catch(() => {}),
+      UserStats.deleteOne({ user: userId }).catch(() => {}),
+    ]);
+
+    // Save user email and name before deletion for confirmation email
+    const userEmail = user.email;
+    const userName = user.name;
+
+    // Delete user
+    await user.deleteOne();
+
+    // Send confirmation email
+    emailService.sendDeletionConfirmationEmail(userEmail, userName).catch(() => {
+      // Don't fail if email fails
+    });
+
+    // If request is from browser (email link), return HTML page
+    if (req.headers.accept && req.headers.accept.includes('text/html')) {
+      return res.status(200).send(`
+        <!DOCTYPE html>
+        <html>
+        <head>
+          <meta charset="utf-8">
+          <meta name="viewport" content="width=device-width, initial-scale=1.0">
+          <title>Account Deleted - MrEnglish</title>
+          <style>
+            body {
+              font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif;
+              display: flex;
+              justify-content: center;
+              align-items: center;
+              min-height: 100vh;
+              margin: 0;
+              background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
+              padding: 20px;
+            }
+            .container {
+              background: white;
+              border-radius: 16px;
+              padding: 40px;
+              max-width: 500px;
+              text-align: center;
+              box-shadow: 0 10px 40px rgba(0,0,0,0.2);
+            }
+            .icon {
+              font-size: 64px;
+              margin-bottom: 20px;
+            }
+            h1 {
+              color: #2C2C47;
+              margin-bottom: 16px;
+            }
+            p {
+              color: #666;
+              line-height: 1.6;
+              margin-bottom: 12px;
+            }
+            .app-link {
+              display: inline-block;
+              margin-top: 24px;
+              padding: 12px 24px;
+              background: #4A90E2;
+              color: white;
+              text-decoration: none;
+              border-radius: 8px;
+              font-weight: 600;
+            }
+          </style>
+        </head>
+        <body>
+          <div class="container">
+            <div class="icon">✅</div>
+            <h1>Account Deleted</h1>
+            <p>Your MrEnglish account has been successfully deleted.</p>
+            <p>All your data has been permanently removed from our system.</p>
+            <p style="margin-top: 24px; font-size: 14px; color: #999;">
+              If you have the app installed, you can close this page and sign in again to create a new account.
+            </p>
+          </div>
+        </body>
+        </html>
+      `);
+    }
+
+    // Otherwise return JSON response
+    return res.status(200).json({
+      success: true,
+      message: 'Your account has been deleted successfully.',
+    });
+  } catch (error) {
+    console.error('Confirm account deletion error:', error);
+    return res.status(500).json({
+      success: false,
+      message: 'Unable to delete account at this time. Please try again later.',
+      error: error.message,
+    });
+  }
+};
 
 // Get all users
 exports.getAllUsers = async (req, res) => {

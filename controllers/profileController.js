@@ -18,6 +18,7 @@ exports.getProfile = async (req, res) => {
     // Format the response to match frontend expectations
     const profileData = {
       id: user._id,
+      _id: user._id,
       name: user.name,
       email: user.email,
       bio: user.bio || '',
@@ -30,6 +31,9 @@ exports.getProfile = async (req, res) => {
       profilePic: user.profilePic,
       createdAt: user.createdAt,
       lastLoginAt: user.lastLoginAt,
+      googleId: user.googleId, // Include googleId to detect Google sign-in users
+      preferredLanguage: user.preferredLanguage || 'en',
+      notificationsEnabled: user.notificationsEnabled !== false, // Default to true if not set
     };
     
     res.status(200).json({
@@ -99,6 +103,7 @@ exports.updateProfile = async (req, res) => {
     // Format the response
     const profileData = {
       id: updatedUser._id,
+      _id: updatedUser._id,
       name: updatedUser.name,
       email: updatedUser.email,
       bio: updatedUser.bio || '',
@@ -111,6 +116,9 @@ exports.updateProfile = async (req, res) => {
       profilePic: updatedUser.profilePic,
       createdAt: updatedUser.createdAt,
       lastLoginAt: updatedUser.lastLoginAt,
+      googleId: updatedUser.googleId, // Include googleId to detect Google sign-in users
+      preferredLanguage: updatedUser.preferredLanguage || 'en',
+      notificationsEnabled: updatedUser.notificationsEnabled !== false, // Default to true if not set
     };
     
     res.status(200).json({

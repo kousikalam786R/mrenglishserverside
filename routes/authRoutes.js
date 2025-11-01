@@ -1,6 +1,18 @@
 const express = require('express');
 const router = express.Router();
-const { googleAuth, getCurrentUser, getAllUsers, getUserById, signup, login, updateCurrentUser } = require('../controllers/authController');
+const {
+  googleAuth,
+  getCurrentUser,
+  getAllUsers,
+  getUserById,
+  signup,
+  login,
+  updateCurrentUser,
+  changePassword,
+  deleteAccount,
+  requestAccountDeletion,
+  confirmAccountDeletion,
+} = require('../controllers/authController');
 const { protect } = require('../middleware/authMiddleware');
 const auth = require('../middleware/auth');
 const authController = require('../controllers/authController');
@@ -16,7 +28,12 @@ router.post('/login', login);
 router.get('/me', protect, getCurrentUser);
 
 //update user details
-router.put('/profile',protect,updateCurrentUser)
+router.put('/profile', protect, updateCurrentUser);
+router.post('/change-password', protect, changePassword);
+router.delete('/delete-account', protect, deleteAccount);
+router.post('/request-deletion', protect, requestAccountDeletion);
+router.post('/confirm-deletion', confirmAccountDeletion);
+router.get('/confirm-deletion', confirmAccountDeletion);
 
 // Get all users (protected route)
 router.get('/users', protect, getAllUsers);

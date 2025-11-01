@@ -67,11 +67,18 @@ class PushNotificationService {
     }
 
     try {
-      // Get user's FCM token from database
-      const user = await User.findById(userId).select('fcmToken');
+      // Get user's FCM token and notification preferences from database
+      const user = await User.findById(userId).select('fcmToken notificationsEnabled');
       
       console.log(`👤 User found:`, user ? 'YES' : 'NO');
       console.log(`🔑 FCM Token exists:`, user && user.fcmToken ? 'YES' : 'NO');
+      console.log(`🔔 Notifications enabled:`, user && user.notificationsEnabled !== false ? 'YES' : 'NO');
+      
+      // Check if notifications are disabled for this user
+      if (user && user.notificationsEnabled === false) {
+        console.log(`📴 Notifications are disabled for user ${userId}. Skipping notification.`);
+        return { success: false, error: 'Notifications disabled' };
+      }
       
       if (!user || !user.fcmToken) {
         console.log(`User ${userId} does not have an FCM token`);

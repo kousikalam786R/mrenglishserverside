@@ -45,6 +45,12 @@ const userSchema = new mongoose.Schema({
     enum: ['A1', 'A2', 'B1', 'B2', 'C1', 'C2'],
     default: 'A2',
   },
+  preferredLanguage: {
+    type: String,
+    enum: ['en', 'hi', 'es', 'fr', 'ar', 'bn'],
+    default: 'en',
+    trim: true,
+  },
   interests: [{
     type: String,
     trim: true,
@@ -55,6 +61,11 @@ const userSchema = new mongoose.Schema({
   // Push notification token
   fcmToken: {
     type: String,
+  },
+  // Notification preferences
+  notificationsEnabled: {
+    type: Boolean,
+    default: true,
   },
   // Authentication fields
   googleId: {

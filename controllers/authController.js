@@ -448,16 +448,51 @@ exports.confirmAccountDeletion = async (req, res) => {
 // Get all users
 exports.getAllUsers = async (req, res) => {
   try {
-    const users = await User.find({}).select('-idToken -__v');
+    // Include blockedUsers field to check if they've blocked the current user
+    const users = await User.find({}).select('-idToken -__v blockedUsers');
     
     if (!users || users.length === 0) {
       return res.status(404).json({ message: 'No users found' });
     }
     
-    // Filter out the current user
-    const filteredUsers = users.filter(user => user._id.toString() !== req.user.id);
+    // Get current user's blocked users list
+    const currentUser = await User.findById(req.user.id).select('blockedUsers').lean();
+    const currentUserBlockedIds = currentUser?.blockedUsers ? currentUser.blockedUsers.map((id: any) => id.toString()) : [];
     
-    res.status(200).json(filteredUsers);
+    // Filter out the current user and blocked users
+    const filteredUsers = users.filter(user => {
+      const userId = user._id.toString();
+      
+      // Don't show current user
+      if (userId === req.user.id.toString()) {
+        return false;
+      }
+      
+      // Don't show users that current user has blocked
+      if (currentUserBlockedIds.includes(userId)) {
+        return false;
+      }
+      
+      // Don't show users who have blocked the current user
+      // Check if current user is in this user's blockedUsers list
+      if (user.blockedUsers && user.blockedUsers.length > 0) {
+        const userBlockedIds = user.blockedUsers.map((id: any) => id.toString());
+        if (userBlockedIds.includes(req.user.id.toString())) {
+          return false;
+        }
+      }
+      
+      return true;
+    });
+    
+    // Remove blockedUsers from response for privacy
+    const usersResponse = filteredUsers.map(user => {
+      const userObject = user.toObject();
+      delete userObject.blockedUsers;
+      return userObject;
+    });
+    
+    res.status(200).json(usersResponse);
   } catch (error) {
     console.error('Get all users error:', error);
     res.status(500).json({ message: 'Server error', error: error.message });
@@ -468,17 +503,56 @@ exports.getAllUsers = async (req, res) => {
 exports.getUserById = async (req, res) => {
   try {
     const { userId } = req.params;
+    const currentUserId = req.user?.id || req.user?.userId; // Handle both auth middleware formats
     
     // Validate MongoDB ObjectID format
     if (!userId || userId.length !== 24) {
       return res.status(400).json({ message: 'Invalid user ID format' });
     }
     
-    const user = await User.findById(userId).select('-idToken -__v');
+    // Check if trying to view own profile
+    if (currentUserId && userId === currentUserId.toString()) {
+      // Allow viewing own profile
+      const user = await User.findById(userId).select('-idToken -__v');
+      if (!user) {
+        return res.status(404).json({ message: 'User not found' });
+      }
+      return res.status(200).json(user);
+    }
     
-    if (!user) {
+    // Get the profile owner to check their blocked list
+    // Use lean() to get a plain JavaScript object and ensure fresh data from database
+    const profileOwner = await User.findById(userId).select('blockedUsers').lean();
+    
+    if (!profileOwner) {
       return res.status(404).json({ message: 'User not found' });
     }
+    
+    // Check if current user is blocked by profile owner
+    // Return 404 (Not Found) instead of 403 to make it appear as if user doesn't exist
+    if (currentUserId && profileOwner.blockedUsers && profileOwner.blockedUsers.length > 0) {
+      const currentUserIdStr = currentUserId.toString();
+      const isBlocked = profileOwner.blockedUsers.some(
+        blockedId => {
+          const blockedIdStr = blockedId.toString ? blockedId.toString() : String(blockedId);
+          return blockedIdStr === currentUserIdStr;
+        }
+      );
+      
+      if (isBlocked) {
+        console.log(`Profile access denied: User ${currentUserIdStr} is blocked by profile owner ${userId}`);
+        return res.status(404).json({ 
+          message: 'User not found',
+          error: 'This user does not exist or may have been removed from the platform.',
+          blocked: true
+        });
+      }
+    }
+    
+    console.log(`Profile access granted: User ${currentUserId} can view profile of ${userId}`);
+    
+    // User is not blocked, return profile
+    const user = await User.findById(userId).select('-idToken -__v -blockedUsers');
     
     res.status(200).json(user);
   } catch (error) {
@@ -700,9 +774,10 @@ exports.getOnlineUsers = async (req, res) => {
     const onlineUserIds = Array.from(onlineUsersMap.keys());
     
     // Find all users that are currently online
+    // Include blockedUsers field to check if they've blocked the current user
     const users = await User.find({
       _id: { $in: onlineUserIds }
-    }).select('-idToken -__v');
+    }).select('-idToken -__v blockedUsers');
     
     console.log(`Found ${users?.length || 0} online users in database`);
     
@@ -710,9 +785,37 @@ exports.getOnlineUsers = async (req, res) => {
       return res.status(200).json([]); // Return empty array if no one is online
     }
     
-    // Filter out the current user
-    const filteredUsers = users.filter(user => user._id.toString() !== req.user.id);
-    console.log(`Returning ${filteredUsers.length} online users (not including current user)`);
+    // Get current user's blocked users list
+    const currentUser = await User.findById(req.user.id).select('blockedUsers').lean();
+    const currentUserBlockedIds = currentUser?.blockedUsers ? currentUser.blockedUsers.map((id: any) => id.toString()) : [];
+    
+    // Filter out the current user and blocked users
+    const filteredUsers = users.filter(user => {
+      const userId = user._id.toString();
+      
+      // Don't show current user
+      if (userId === req.user.id) {
+        return false;
+      }
+      
+      // Don't show users that current user has blocked
+      if (currentUserBlockedIds.includes(userId)) {
+        return false;
+      }
+      
+      // Don't show users who have blocked the current user
+      // Check if current user is in this user's blockedUsers list
+      if (user.blockedUsers && user.blockedUsers.length > 0) {
+        const userBlockedIds = user.blockedUsers.map((id: any) => id.toString());
+        if (userBlockedIds.includes(req.user.id.toString())) {
+          return false;
+        }
+      }
+      
+      return true;
+    });
+    
+    console.log(`Returning ${filteredUsers.length} online users (after filtering blocked users)`);
     
     // Add online status and readyToTalk status to all users
     const onlineUsers = filteredUsers.map(user => {
@@ -720,8 +823,12 @@ exports.getOnlineUsers = async (req, res) => {
       const isReady = isUserReadyToTalk(userId);
       const readyData = isReady ? readyToTalkUsers.get(userId) : null;
       
+      const userObject = user.toObject();
+      // Remove blockedUsers from response for privacy
+      delete userObject.blockedUsers;
+      
       return {
-        ...user.toObject(),
+        ...userObject,
         isOnline: true,
         readyToTalk: isReady,
         readyData: readyData || null,
@@ -738,6 +845,81 @@ exports.getOnlineUsers = async (req, res) => {
 };
 
 // Debug endpoint to check which users are currently online
+// Block/Unblock user
+exports.blockUser = async (req, res) => {
+  try {
+    const currentUserId = req.user?.id || req.user?.userId;
+    const { userId } = req.params;
+    const { block } = req.body; // true to block, false to unblock
+    
+    if (!currentUserId) {
+      return res.status(401).json({ message: 'Unauthorized' });
+    }
+    
+    // Validate MongoDB ObjectID format
+    if (!userId || userId.length !== 24) {
+      return res.status(400).json({ message: 'Invalid user ID format' });
+    }
+    
+    // Cannot block yourself
+    if (currentUserId.toString() === userId) {
+      return res.status(400).json({ message: 'Cannot block yourself' });
+    }
+    
+    const currentUser = await User.findById(currentUserId);
+    if (!currentUser) {
+      return res.status(404).json({ message: 'Current user not found' });
+    }
+    
+    // Initialize blockedUsers array if it doesn't exist
+    if (!currentUser.blockedUsers) {
+      currentUser.blockedUsers = [];
+    }
+    
+    if (block) {
+      // Block user - add to blocked list if not already blocked
+      if (!currentUser.blockedUsers.includes(userId)) {
+        currentUser.blockedUsers.push(userId);
+        await currentUser.save();
+      }
+      res.status(200).json({ 
+        success: true, 
+        message: 'User blocked successfully',
+        blocked: true
+      });
+    } else {
+      // Unblock user - remove from blocked list using MongoDB $pull operator
+      // This is more reliable than filter + save for array updates
+      const beforeUpdate = await User.findById(currentUserId).select('blockedUsers');
+      const beforeCount = beforeUpdate.blockedUsers ? beforeUpdate.blockedUsers.length : 0;
+      
+      // Use $pull to remove the user from the blockedUsers array
+      // This ensures proper ObjectId handling and atomic update
+      const updateResult = await User.findByIdAndUpdate(
+        currentUserId,
+        { $pull: { blockedUsers: userId } },
+        { new: true, select: 'blockedUsers' }
+      );
+      
+      const afterCount = updateResult.blockedUsers ? updateResult.blockedUsers.length : 0;
+      
+      // Log for debugging
+      console.log(`Unblock: User ${currentUserId} unblocking ${userId}`);
+      console.log(`Blocked users before: ${beforeCount}, after: ${afterCount}`);
+      
+      res.status(200).json({ 
+        success: true, 
+        message: 'User unblocked successfully',
+        blocked: false,
+        blockedUsersCount: afterCount
+      });
+    }
+  } catch (error) {
+    console.error('Block user error:', error);
+    res.status(500).json({ message: 'Server error', error: error.message });
+  }
+};
+
 exports.debugOnlineUsers = async (req, res) => {
   try {
     // Import the onlineUsers map

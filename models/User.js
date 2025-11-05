@@ -132,7 +132,12 @@ const userSchema = new mongoose.Schema({
       enum: ['A1', 'A2', 'B1', 'B2', 'C1', 'C2'],
       default: 'C2'
     }
-  }
+  },
+  // Blocked users list
+  blockedUsers: [{
+    type: mongoose.Schema.Types.ObjectId,
+    ref: 'User'
+  }]
 });
 
 // Pre-save middleware to hash passwords

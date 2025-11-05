@@ -5,6 +5,7 @@ const {
   getCurrentUser,
   getAllUsers,
   getUserById,
+  blockUser,
   signup,
   login,
   updateCurrentUser,
@@ -40,6 +41,9 @@ router.get('/users', protect, getAllUsers);
 
 // Get user by ID (protected route)
 router.get('/users/:userId', protect, getUserById);
+
+// Block/Unblock user (protected route)
+router.post('/users/:userId/block', protect, blockUser);
 
 // User registration 
 router.post('/register', function(req, res) {

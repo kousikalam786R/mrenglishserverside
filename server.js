@@ -683,16 +683,56 @@ io.on('connection', async (socket) => {
   });
   
   // Handle a request to get all ready-to-talk users
-  socket.on('get-ready-users', () => {
+  socket.on('get-ready-users', async () => {
     try {
       const readyUsers = getReadyToTalkUsers();
       console.log(`Sending ${readyUsers.size} ready users to ${socket.userId}`);
       
-      socket.emit('ready-users-list', {
-        users: Array.from(readyUsers).map(([userId, data]) => ({
+      // Get current user's blocked users list
+      const currentUser = await User.findById(socket.userId).select('blockedUsers').lean();
+      const currentUserBlockedIds = currentUser?.blockedUsers ? currentUser.blockedUsers.map((id) => id.toString()) : [];
+      
+      // Filter out blocked users from ready users list
+      // Use a for loop since we need async checks
+      const filteredUsers = [];
+      for (const [userId, data] of readyUsers) {
+        const userIdStr = userId.toString();
+        
+        // Don't include current user
+        if (userIdStr === socket.userId.toString()) {
+          continue;
+        }
+        
+        // Don't include users that current user has blocked
+        if (currentUserBlockedIds.includes(userIdStr)) {
+          continue;
+        }
+        
+        // Don't include users who have blocked the current user
+        try {
+          const readyUser = await User.findById(userId).select('blockedUsers').lean();
+          if (readyUser?.blockedUsers && readyUser.blockedUsers.length > 0) {
+            const readyUserBlockedIds = readyUser.blockedUsers.map((id) => id.toString());
+            if (readyUserBlockedIds.includes(socket.userId.toString())) {
+              continue;
+            }
+          }
+        } catch (err) {
+          console.error(`Error checking blocked status for user ${userId}:`, err);
+          // If we can't check, exclude to be safe
+          continue;
+        }
+        
+        filteredUsers.push({
           userId,
           ...data
-        }))
+        });
+      }
+      
+      console.log(`Sending ${filteredUsers.length} ready users (after filtering blocked users)`);
+      
+      socket.emit('ready-users-list', {
+        users: filteredUsers
       });
     } catch (error) {
       console.error('Error getting ready users:', error);

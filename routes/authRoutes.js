@@ -6,6 +6,7 @@ const {
   getAllUsers,
   getUserById,
   blockUser,
+  toggleFavorite,
   signup,
   login,
   updateCurrentUser,
@@ -45,6 +46,9 @@ router.get('/users/:userId', protect, getUserById);
 // Block/Unblock user (protected route)
 router.post('/users/:userId/block', protect, blockUser);
 
+// Add/Remove favorite user (protected route)
+router.post('/users/:userId/favorite', protect, toggleFavorite);
+
 // User registration 
 router.post('/register', function(req, res) {
   return authController.register(req, res);
@@ -68,6 +72,16 @@ router.post('/profile', auth, function(req, res) {
 // Get user by ID
 router.get('/users/:userId', auth, function(req, res) {
   return authController.getUserById(req, res);
+});
+
+// Block/Unblock user
+router.post('/users/:userId/block', auth, function(req, res) {
+  return authController.blockUser(req, res);
+});
+
+// Add/Remove favorite user
+router.post('/users/:userId/favorite', auth, function(req, res) {
+  return authController.toggleFavorite(req, res);
 });
 
 // Get all users for testing (everyone set as online)

@@ -615,7 +615,7 @@ io.on('connection', async (socket) => {
     }
   });
 
-  // Handle get user status request
+  // Handle get user status request (single user - kept for backward compatibility)
   socket.on('get-user-status', async (data) => {
     try {
       const { userId } = data;
@@ -636,6 +636,63 @@ io.on('connection', async (socket) => {
       }
     } catch (error) {
       console.error('Error getting user status:', error);
+    }
+  });
+
+  // Handle bulk get user statuses request (multiple users at once)
+  socket.on('get-bulk-user-statuses', async (data) => {
+    try {
+      const { userIds } = data;
+      if (!userIds || !Array.isArray(userIds) || userIds.length === 0) {
+        return;
+      }
+
+      console.log(`📡 User ${socket.userId} requesting bulk status for ${userIds.length} users`);
+      
+      // Get all users at once
+      const users = await User.find({
+        _id: { $in: userIds }
+      }).select('_id isOnline lastSeenAt');
+      
+      // Create a map of user statuses
+      const statusMap = {};
+      users.forEach(user => {
+        statusMap[user._id.toString()] = {
+          userId: user._id.toString(),
+          status: user.isOnline ? 'online' : 'offline',
+          lastSeen: user.lastSeenAt
+        };
+      });
+      
+      // Also check onlineUsers map for real-time status
+      userIds.forEach(userId => {
+        const userIdStr = userId.toString();
+        if (onlineUsers.has(userIdStr)) {
+          // User is definitely online (connected via socket)
+          statusMap[userIdStr] = {
+            userId: userIdStr,
+            status: 'online',
+            lastSeen: new Date()
+          };
+        } else if (!statusMap[userIdStr]) {
+          // User not found in database or map, mark as offline
+          statusMap[userIdStr] = {
+            userId: userIdStr,
+            status: 'offline',
+            lastSeen: null
+          };
+        }
+      });
+      
+      // Send bulk status response
+      socket.emit('bulk-user-statuses', {
+        statuses: Object.values(statusMap)
+      });
+      
+      console.log(`📡 Sent bulk status for ${Object.keys(statusMap).length} users`);
+    } catch (error) {
+      console.error('Error getting bulk user statuses:', error);
+      socket.emit('bulk-user-statuses', { statuses: [] });
     }
   });
   

@@ -1,3 +1,4 @@
+const mongoose = require('mongoose');
 const User = require('../models/User');
 const Message = require('../models/Message');
 const CallHistory = require('../models/CallHistory');
@@ -448,8 +449,8 @@ exports.confirmAccountDeletion = async (req, res) => {
 // Get all users
 exports.getAllUsers = async (req, res) => {
   try {
-    // Include blockedUsers field to check if they've blocked the current user
-    const users = await User.find({}).select('-idToken -__v blockedUsers');
+    // Exclude idToken and __v, but keep all other fields including blockedUsers
+    const users = await User.find({}).select('-idToken -__v');
     
     if (!users || users.length === 0) {
       return res.status(404).json({ message: 'No users found' });
@@ -457,7 +458,7 @@ exports.getAllUsers = async (req, res) => {
     
     // Get current user's blocked users list
     const currentUser = await User.findById(req.user.id).select('blockedUsers').lean();
-    const currentUserBlockedIds = currentUser?.blockedUsers ? currentUser.blockedUsers.map((id: any) => id.toString()) : [];
+    const currentUserBlockedIds = currentUser?.blockedUsers ? currentUser.blockedUsers.map((id) => id.toString()) : [];
     
     // Filter out the current user and blocked users
     const filteredUsers = users.filter(user => {
@@ -476,7 +477,7 @@ exports.getAllUsers = async (req, res) => {
       // Don't show users who have blocked the current user
       // Check if current user is in this user's blockedUsers list
       if (user.blockedUsers && user.blockedUsers.length > 0) {
-        const userBlockedIds = user.blockedUsers.map((id: any) => id.toString());
+        const userBlockedIds = user.blockedUsers.map((id) => id.toString());
         if (userBlockedIds.includes(req.user.id.toString())) {
           return false;
         }
@@ -774,10 +775,10 @@ exports.getOnlineUsers = async (req, res) => {
     const onlineUserIds = Array.from(onlineUsersMap.keys());
     
     // Find all users that are currently online
-    // Include blockedUsers field to check if they've blocked the current user
+    // Exclude idToken and __v, but keep all other fields including blockedUsers
     const users = await User.find({
       _id: { $in: onlineUserIds }
-    }).select('-idToken -__v blockedUsers');
+    }).select('-idToken -__v');
     
     console.log(`Found ${users?.length || 0} online users in database`);
     
@@ -787,7 +788,7 @@ exports.getOnlineUsers = async (req, res) => {
     
     // Get current user's blocked users list
     const currentUser = await User.findById(req.user.id).select('blockedUsers').lean();
-    const currentUserBlockedIds = currentUser?.blockedUsers ? currentUser.blockedUsers.map((id: any) => id.toString()) : [];
+    const currentUserBlockedIds = currentUser?.blockedUsers ? currentUser.blockedUsers.map((id) => id.toString()) : [];
     
     // Filter out the current user and blocked users
     const filteredUsers = users.filter(user => {
@@ -806,7 +807,7 @@ exports.getOnlineUsers = async (req, res) => {
       // Don't show users who have blocked the current user
       // Check if current user is in this user's blockedUsers list
       if (user.blockedUsers && user.blockedUsers.length > 0) {
-        const userBlockedIds = user.blockedUsers.map((id: any) => id.toString());
+        const userBlockedIds = user.blockedUsers.map((id) => id.toString());
         if (userBlockedIds.includes(req.user.id.toString())) {
           return false;
         }
@@ -916,6 +917,79 @@ exports.blockUser = async (req, res) => {
     }
   } catch (error) {
     console.error('Block user error:', error);
+    res.status(500).json({ message: 'Server error', error: error.message });
+  }
+};
+
+// Add/Remove favorite user (friend)
+exports.toggleFavorite = async (req, res) => {
+  try {
+    const currentUserId = req.user?.id || req.user?.userId;
+    const { userId } = req.params;
+    const { favorite } = req.body; // true to add, false to remove
+    
+    if (!currentUserId) {
+      return res.status(401).json({ message: 'Unauthorized' });
+    }
+    
+    // Validate MongoDB ObjectID format
+    if (!userId || userId.length !== 24) {
+      return res.status(400).json({ message: 'Invalid user ID format' });
+    }
+    
+    // Cannot favorite yourself
+    if (currentUserId.toString() === userId) {
+      return res.status(400).json({ message: 'Cannot add yourself as favorite' });
+    }
+    
+    const currentUser = await User.findById(currentUserId);
+    if (!currentUser) {
+      return res.status(404).json({ message: 'Current user not found' });
+    }
+    
+    if (!currentUser.favorites) {
+      currentUser.favorites = [];
+    }
+    
+    if (favorite) {
+      // Add to favorites - add to favorites list if not already favorited
+      const userIdObj = new mongoose.Types.ObjectId(userId);
+      if (!currentUser.favorites.some(id => id.toString() === userId)) {
+        currentUser.favorites.push(userIdObj);
+        await currentUser.save();
+      }
+      res.status(200).json({ 
+        success: true, 
+        message: 'User added to favorites successfully',
+        favorite: true
+      });
+    } else {
+      // Remove from favorites - remove from favorites list using MongoDB $pull operator
+      const beforeUpdate = await User.findById(currentUserId).select('favorites');
+      const beforeCount = beforeUpdate.favorites ? beforeUpdate.favorites.length : 0;
+      
+      // Use $pull to remove the user from the favorites array
+      const updateResult = await User.findByIdAndUpdate(
+        currentUserId,
+        { $pull: { favorites: userId } },
+        { new: true, select: 'favorites' }
+      );
+      
+      const afterCount = updateResult.favorites ? updateResult.favorites.length : 0;
+      
+      // Log for debugging
+      console.log(`Remove favorite: User ${currentUserId} removing ${userId} from favorites`);
+      console.log(`Favorites before: ${beforeCount}, after: ${afterCount}`);
+      
+      res.status(200).json({ 
+        success: true, 
+        message: 'User removed from favorites successfully',
+        favorite: false,
+        favoritesCount: afterCount
+      });
+    }
+  } catch (error) {
+    console.error('Toggle favorite error:', error);
     res.status(500).json({ message: 'Server error', error: error.message });
   }
 };

@@ -2,6 +2,29 @@ const User = require('../models/User');
 const UserStats = require('../models/UserStats');
 const Rating = require('../models/Rating');
 const Feedback = require('../models/Feedback');
+const imagekitService = require('../utils/imagekit');
+
+const formatUserProfile = (user) => ({
+  id: user._id,
+  _id: user._id,
+  name: user.name,
+  email: user.email,
+  bio: user.bio || '',
+  age: user.age,
+  gender: user.gender,
+  country: user.country || '',
+  nativeLanguage: user.nativeLanguage || '',
+  englishLevel: user.englishLevel || 'A2',
+  interests: user.interests || [],
+  profilePic: user.profilePic,
+  profilePicFileId: user.profilePicFileId || null,
+  profilePicThumbnail: user.profilePicThumbnail || null,
+  createdAt: user.createdAt,
+  lastLoginAt: user.lastLoginAt,
+  googleId: user.googleId,
+  preferredLanguage: user.preferredLanguage || 'en',
+  notificationsEnabled: user.notificationsEnabled !== false,
+});
 
 // Get user profile
 exports.getProfile = async (req, res) => {
@@ -16,26 +39,8 @@ exports.getProfile = async (req, res) => {
     }
     
     // Format the response to match frontend expectations
-    const profileData = {
-      id: user._id,
-      _id: user._id,
-      name: user.name,
-      email: user.email,
-      bio: user.bio || '',
-      age: user.age,
-      gender: user.gender,
-      country: user.country || '',
-      nativeLanguage: user.nativeLanguage || '',
-      englishLevel: user.englishLevel || 'A2',
-      interests: user.interests || [],
-      profilePic: user.profilePic,
-      createdAt: user.createdAt,
-      lastLoginAt: user.lastLoginAt,
-      googleId: user.googleId, // Include googleId to detect Google sign-in users
-      preferredLanguage: user.preferredLanguage || 'en',
-      notificationsEnabled: user.notificationsEnabled !== false, // Default to true if not set
-    };
-    
+    const profileData = formatUserProfile(user);
+
     res.status(200).json({
       success: true,
       user: profileData,
@@ -86,6 +91,8 @@ exports.updateProfile = async (req, res) => {
     delete updates.idToken;
     delete updates._id;
     delete updates.createdAt;
+    delete updates.profilePicFileId;
+    delete updates.profilePicThumbnail;
     
     const updatedUser = await User.findByIdAndUpdate(
       req.user.id,
@@ -101,25 +108,7 @@ exports.updateProfile = async (req, res) => {
     }
     
     // Format the response
-    const profileData = {
-      id: updatedUser._id,
-      _id: updatedUser._id,
-      name: updatedUser.name,
-      email: updatedUser.email,
-      bio: updatedUser.bio || '',
-      age: updatedUser.age,
-      gender: updatedUser.gender,
-      country: updatedUser.country || '',
-      nativeLanguage: updatedUser.nativeLanguage || '',
-      englishLevel: updatedUser.englishLevel || 'A2',
-      interests: updatedUser.interests || [],
-      profilePic: updatedUser.profilePic,
-      createdAt: updatedUser.createdAt,
-      lastLoginAt: updatedUser.lastLoginAt,
-      googleId: updatedUser.googleId, // Include googleId to detect Google sign-in users
-      preferredLanguage: updatedUser.preferredLanguage || 'en',
-      notificationsEnabled: updatedUser.notificationsEnabled !== false, // Default to true if not set
-    };
+    const profileData = formatUserProfile(updatedUser);
     
     res.status(200).json({
       success: true,
@@ -132,6 +121,93 @@ exports.updateProfile = async (req, res) => {
       success: false,
       message: 'Server error', 
       error: error.message 
+    });
+  }
+};
+
+// Get ImageKit authentication parameters for client-side uploads
+exports.getImageKitAuth = async (req, res) => {
+  try {
+    const client = imagekitService.getClient();
+    const authParams = client.getAuthenticationParameters();
+
+    res.status(200).json({
+      success: true,
+      token: authParams.token,
+      signature: authParams.signature,
+      expire: authParams.expire,
+      publicKey: process.env.IMAGEKIT_PUBLIC_KEY,
+      urlEndpoint: process.env.IMAGEKIT_URL_ENDPOINT,
+      folder: imagekitService.getConfiguredFolder(),
+    });
+  } catch (error) {
+    console.error('Get ImageKit auth error:', error);
+    res.status(500).json({
+      success: false,
+      message:
+        error.message.includes('ImageKit is not configured')
+          ? 'Image upload service is not configured on the server.'
+          : 'Failed to generate ImageKit authentication parameters.',
+      error: error.message,
+    });
+  }
+};
+
+// Update profile picture metadata after successful ImageKit upload
+exports.updateProfilePicture = async (req, res) => {
+  try {
+    const { fileId, url, thumbnailUrl } = req.body;
+
+    if (!fileId || !url) {
+      return res.status(400).json({
+        success: false,
+        message: 'Both fileId and url are required to update profile picture.',
+      });
+    }
+
+    const user = await User.findById(req.user.id);
+
+    if (!user) {
+      return res.status(404).json({
+        success: false,
+        message: 'User not found',
+      });
+    }
+
+    const previousFileId =
+      user.profilePicFileId && user.profilePicFileId !== fileId
+        ? user.profilePicFileId
+        : null;
+
+    user.profilePic = url;
+    user.profilePicFileId = fileId;
+    user.profilePicThumbnail = thumbnailUrl || null;
+
+    await user.save();
+
+    if (previousFileId) {
+      try {
+        const client = imagekitService.getClient();
+        await client.deleteFile(previousFileId);
+      } catch (cleanupError) {
+        console.warn(
+          `Failed to delete previous ImageKit file (${previousFileId}):`,
+          cleanupError.message
+        );
+      }
+    }
+
+    res.status(200).json({
+      success: true,
+      message: 'Profile picture updated successfully',
+      user: formatUserProfile(user),
+    });
+  } catch (error) {
+    console.error('Update profile picture error:', error);
+    res.status(500).json({
+      success: false,
+      message: 'Failed to update profile picture',
+      error: error.message,
     });
   }
 };

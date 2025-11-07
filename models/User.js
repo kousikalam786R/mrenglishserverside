@@ -58,6 +58,12 @@ const userSchema = new mongoose.Schema({
   profilePic: {
     type: String,
   },
+  profilePicFileId: {
+    type: String,
+  },
+  profilePicThumbnail: {
+    type: String,
+  },
   // Push notification token
   fcmToken: {
     type: String,
